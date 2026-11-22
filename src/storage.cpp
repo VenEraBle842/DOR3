@@ -1,6 +1,8 @@
+#include <charconv>
 #include <chrono>
 #include <fstream>
 #include <iomanip>
+#include <input_limits.hpp>
 #include <locale>
 #include <sstream>
 #include <storage.hpp>
@@ -31,6 +33,15 @@ static Result<std::filesystem::path> temporaryDirectory(const std::filesystem::p
     return failure(ErrorCode::FileWrite, "Cannot create a temporary file for " + target.string());
 }
 
+static bool readUnsigned(std::istream& input, std::size_t& value) {
+    std::string token;
+    if (!(input >> token)) {
+        return false;
+    }
+    const auto parsed = std::from_chars(token.data(), token.data() + token.size(), value);
+    return parsed.ec == std::errc{} && parsed.ptr == token.data() + token.size();
+}
+
 Result<Graph> readGraph(std::istream& input) {
     std::string line;
     if (!std::getline(input, line) || (line != "DOR3_GRAPH 1" && line != "DOR3_GRAPH 1\r")) {
@@ -42,10 +53,13 @@ Result<Graph> readGraph(std::istream& input) {
     }
     std::istringstream counts(line);
     counts.imbue(std::locale::classic());
-    if (!(counts >> vertices >> edges) || !(counts >> std::ws).eof() || vertices > 100000 ||
-        edges > 2000000) {
-        return failure(ErrorCode::FileRead,
-                       "Invalid counts (limits: 100000 vertices, 2000000 edges).");
+    if (!readUnsigned(counts, vertices) || !readUnsigned(counts, edges) ||
+        !(counts >> std::ws).eof()) {
+        return failure(ErrorCode::FileRead, "Expected two unsigned decimal counts.");
+    }
+    auto size = validateGraphSize(vertices, edges);
+    if (!size) {
+        return failure(ErrorCode::FileRead, size.error().detail);
     }
     Graph graph;
     for (std::size_t i = 0; i < vertices; ++i) {
@@ -69,7 +83,8 @@ Result<Graph> readGraph(std::istream& input) {
         }
         std::istringstream record(line);
         record.imbue(std::locale::classic());
-        if (!(record >> first >> second) || !(record >> std::ws).eof()) {
+        if (!readUnsigned(record, first) || !readUnsigned(record, second) ||
+            !(record >> std::ws).eof()) {
             return failure(ErrorCode::FileRead, "Invalid edge " + std::to_string(i));
         }
         auto added = graph.addEdge(first, second);
@@ -86,6 +101,10 @@ Result<Graph> readGraph(std::istream& input) {
 }
 
 Result<void> writeGraph(const Graph& graph, std::ostream& output) {
+    auto size = validateGraphSize(graph.vertexCount(), graph.edgeCount());
+    if (!size) {
+        return size;
+    }
     output.imbue(std::locale::classic());
     output << "DOR3_GRAPH 1\n" << graph.vertexCount() << ' ' << graph.edgeCount() << '\n';
     for (std::size_t i = 0; i < graph.vertexCount(); ++i) {
@@ -152,6 +171,10 @@ Result<void> writeFile(const std::filesystem::path& path,
 }
 
 Result<void> saveGraph(const Graph& graph, const std::filesystem::path& path) {
+    auto size = validateGraphSize(graph.vertexCount(), graph.edgeCount());
+    if (!size) {
+        return size;
+    }
     return writeFile(path, [&](std::ostream& output) {
         return writeGraph(graph, output);
     });

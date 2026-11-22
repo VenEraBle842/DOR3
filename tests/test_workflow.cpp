@@ -2,6 +2,8 @@
 #include <chrono>
 #include <fstream>
 #include <gtest/gtest.h>
+#include <input_limits.hpp>
+#include <limits>
 #include <sstream>
 #include <storage.hpp>
 
@@ -18,6 +20,13 @@ protected:
 
     void TearDown() override {
         std::filesystem::remove_all(folder);
+    }
+
+    void expectNoTemporaryDirectories() const {
+        for (const auto& entry : std::filesystem::directory_iterator(folder)) {
+            EXPECT_FALSE(entry.path().filename().string().starts_with(".dor3-write-"))
+                << entry.path();
+        }
     }
 };
 
@@ -60,6 +69,46 @@ TEST(Storage, RejectsMalformedAndTruncatedInput) {
     EXPECT_FALSE(writeGraph(graph, broken));
 }
 
+TEST(Storage, RejectsSignedOverflowingAndPartialNumbersInEveryField) {
+    const auto maximum = std::to_string(std::numeric_limits<std::size_t>::max());
+    const DynamicArray<std::string> invalidTokens{
+        "-1", "-" + maximum, "+1", maximum + "0", "1x", "1.0"};
+    for (const auto& token : invalidTokens) {
+        const DynamicArray<std::string> files{
+            "DOR3_GRAPH 1\n" + token + " 0\n\"a\"\n",
+            "DOR3_GRAPH 1\n2 " + token + "\n\"a\"\n\"b\"\n0 1\n",
+            "DOR3_GRAPH 1\n2 1\n\"a\"\n\"b\"\n" + token + " 0\n",
+            "DOR3_GRAPH 1\n2 1\n\"a\"\n\"b\"\n0 " + token + "\n"};
+        for (const auto& file : files) {
+            std::istringstream input(file);
+            EXPECT_FALSE(readGraph(input)) << file;
+        }
+    }
+    for (const auto* file : {"DOR3_GRAPH 1\n-0 0\n",
+                             "DOR3_GRAPH 1\n0 -0\n",
+                             "DOR3_GRAPH 1\n2 1\n\"a\"\n\"b\"\n-0 1\n",
+                             "DOR3_GRAPH 1\n2 1\n\"a\"\n\"b\"\n1 -0\n",
+                             "DOR3_GRAPH 1\n2 1\n\"a\"\n\"b\"\n0 1 extra\n"}) {
+        std::istringstream input(file);
+        EXPECT_FALSE(readGraph(input)) << file;
+    }
+}
+
+TEST(Storage, SharedLimitsAcceptBoundariesAndRejectOversizedHeaders) {
+    EXPECT_TRUE(validateGraphSize(InputLimits::maxVertices, InputLimits::maxEdges));
+    EXPECT_FALSE(validateGraphSize(InputLimits::maxVertices + 1, 0));
+    EXPECT_FALSE(validateGraphSize(0, InputLimits::maxEdges + 1));
+    const DynamicArray<std::string> counts{
+        std::to_string(InputLimits::maxVertices + 1) + " 0",
+        "0 " + std::to_string(InputLimits::maxEdges + 1)};
+    for (const auto& line : counts) {
+        std::istringstream input("DOR3_GRAPH 1\n" + line + "\n");
+        auto result = readGraph(input);
+        ASSERT_FALSE(result);
+        EXPECT_EQ(result.error().code, ErrorCode::FileRead);
+    }
+}
+
 TEST_F(FilesTest, FailedWriteKeepsExistingTarget) {
     const auto path = folder / "graph.data";
     {
@@ -75,7 +124,7 @@ TEST_F(FilesTest, FailedWriteKeepsExistingTarget) {
     std::string text;
     input >> text;
     EXPECT_EQ(text, "original");
-    EXPECT_FALSE(std::filesystem::exists(path.string() + ".tmp"));
+    expectNoTemporaryDirectories();
     EXPECT_FALSE(saveGraph(Graph{}, folder / "missing" / "graph.data"));
     std::size_t entries = 0;
     for (const auto& entry : std::filesystem::directory_iterator(folder)) {
@@ -86,11 +135,79 @@ TEST_F(FilesTest, FailedWriteKeepsExistingTarget) {
     Graph invalid;
     invalid.addVertex({"invalid\nlabel"});
     EXPECT_FALSE(saveGraph(invalid, path));
+    expectNoTemporaryDirectories();
     std::ifstream preserved(path);
     preserved >> text;
     EXPECT_EQ(text, "original");
     EXPECT_TRUE(saveGraph(Graph{}, path));
     EXPECT_TRUE(loadGraph(path));
+    expectNoTemporaryDirectories();
+}
+
+TEST_F(FilesTest, OversizedGraphCannotBeWrittenOrReplaceExistingFile) {
+    Graph graph;
+    for (std::size_t i = 0; i <= InputLimits::maxVertices; ++i) {
+        graph.addVertex({""});
+    }
+    std::ostringstream output;
+    auto result = writeGraph(graph, output);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().code, ErrorCode::LimitExceeded);
+    EXPECT_TRUE(output.str().empty());
+
+    const auto path = folder / "graph.data";
+    ASSERT_TRUE(saveGraph(Graph{}, path));
+    EXPECT_FALSE(saveGraph(graph, path));
+    auto loaded = loadGraph(path);
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(loaded->vertexCount(), 0);
+    expectNoTemporaryDirectories();
+}
+
+TEST_F(FilesTest, ApplicationVertexLimitPreservesSavedGraphAndColoring) {
+    GraphApplication application;
+    for (std::size_t i = 0; i < InputLimits::maxVertices; ++i) {
+        ASSERT_TRUE(application.addVertex(""));
+    }
+    const auto path = folder / "boundary.graph";
+    ASSERT_TRUE(application.save(path));
+    ASSERT_TRUE(application.run(ColoringAlgorithm::Sequential));
+    auto result = application.addVertex("too many");
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().code, ErrorCode::LimitExceeded);
+    EXPECT_EQ(application.graph().vertexCount(), InputLimits::maxVertices);
+    EXPECT_FALSE(application.isModified());
+    EXPECT_TRUE(application.coloring());
+    ASSERT_TRUE(application.open(path));
+    EXPECT_EQ(application.graph().vertexCount(), InputLimits::maxVertices);
+}
+
+TEST(Application, EdgeLimitRejectsNewEdgeWithoutInvalidatingColoring) {
+    GraphApplication application;
+    for (std::size_t i = 0; i < InputLimits::maxVertices; ++i) {
+        ASSERT_TRUE(application.addVertex(""));
+    }
+    // Distribute edges across the graph to keep this boundary test sparse and fast.
+    constexpr auto neighborsPerVertex = InputLimits::maxEdges / InputLimits::maxVertices + 1;
+    for (VertexId first = 0; first < InputLimits::maxVertices &&
+                             application.graph().edgeCount() < InputLimits::maxEdges; ++first) {
+        for (std::size_t offset = 1; offset <= neighborsPerVertex &&
+                                     application.graph().edgeCount() < InputLimits::maxEdges;
+             ++offset) {
+            ASSERT_TRUE(application.addEdge(first, (first + offset) % InputLimits::maxVertices));
+        }
+    }
+    ASSERT_EQ(application.graph().edgeCount(), InputLimits::maxEdges);
+    ASSERT_TRUE(application.run(ColoringAlgorithm::Sequential));
+    constexpr VertexId target = neighborsPerVertex + 1;
+    ASSERT_FALSE(application.graph().hasEdge(0, target));
+    auto result = application.addEdge(0, target);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error().code, ErrorCode::LimitExceeded);
+    EXPECT_EQ(application.graph().edgeCount(), InputLimits::maxEdges);
+    EXPECT_FALSE(application.graph().hasEdge(0, target));
+    EXPECT_FALSE(application.graph().hasEdge(target, 0));
+    EXPECT_TRUE(application.coloring());
 }
 
 TEST_F(FilesTest, ApplicationPreservesStateOnFailuresAndInvalidatesColoringOnEdits) {
@@ -132,7 +249,6 @@ TEST_F(FilesTest, ComparisonAndCsvAndFailedComparisonPreserveResults) {
         EXPECT_EQ(row.edges, 8);
         EXPECT_EQ(row.colors, 2);
         EXPECT_GE(row.medianMicroseconds, 0);
-        EXPECT_TRUE(row.verified);
     }
     EXPECT_FALSE(application.compare(0));
     EXPECT_EQ(application.measurements().size(), 2);
@@ -157,6 +273,11 @@ TEST_F(FilesTest, ComparisonAndCsvAndFailedComparisonPreserveResults) {
     EXPECT_EQ(lines, 8);
     EXPECT_FALSE(application.compareSeries({20, Topology::Cycle, 0, 1}, 20, 3));
     EXPECT_FALSE(application.compareSeries({20, Topology::Path, 0, 1}, 0, 3));
+    EXPECT_EQ(application.measurements().size(), 8);
+    EXPECT_FALSE(application.compare(InputLimits::maxRepetitions + 1));
+    EXPECT_FALSE(application.compareSeries({2000, Topology::Complete, 0, 1}, 1, 0));
+    EXPECT_FALSE(application.compareSeries({20, Topology::Path, 0, 1}, 4,
+                                           InputLimits::maxRepetitions + 1));
     EXPECT_EQ(application.measurements().size(), 8);
     DynamicArray<BenchmarkRow> empty;
     EXPECT_TRUE(exportBenchmark(empty, folder / "empty.csv"));

@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <functional>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 using VertexId = std::size_t;
@@ -15,7 +16,8 @@ struct VertexData {
 };
 
 template <typename TData>
-requires std::default_initializable<TData> && std::movable<TData>
+requires std::default_initializable<TData> && std::movable<TData> &&
+         std::is_nothrow_move_constructible_v<TData> && std::is_nothrow_move_assignable_v<TData>
 class UndirectedGraph {
     DynamicArray<TData> vertices_;
     DynamicArray<DynamicArray<VertexId>> adjacency_;

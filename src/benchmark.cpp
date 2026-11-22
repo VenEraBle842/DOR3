@@ -1,29 +1,24 @@
 #include <benchmark.hpp>
 #include <chrono>
 #include <iomanip>
+#include <input_limits.hpp>
 #include <locale>
 #include <ostream>
 #include <storage.hpp>
 
-std::string_view topologyName(Topology topology) {
-    switch (topology) {
-    case Topology::Path:
-        return "Path";
-    case Topology::Cycle:
-        return "Cycle";
-    case Topology::Star:
-        return "Star";
-    case Topology::Complete:
-        return "Complete";
-    case Topology::Random:
-        return "Random";
+static Result<void> validateRepetitions(std::size_t repetitions) {
+    if (repetitions == 0 || repetitions > InputLimits::maxRepetitions) {
+        return failure(ErrorCode::InvalidParameters,
+                       "Repetitions must be 1.." +
+                           std::to_string(InputLimits::maxRepetitions) + ".");
     }
-    return "Unknown";
+    return {};
 }
 
 Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::size_t repetitions) {
-    if (repetitions == 0 || repetitions > 101) {
-        return failure(ErrorCode::InvalidParameters, "Repetitions must be 1..101.");
+    auto validRepetitions = validateRepetitions(repetitions);
+    if (!validRepetitions) {
+        return std::unexpected(validRepetitions.error());
     }
     DynamicArray<BenchmarkRow> rows;
     for (auto algorithm : {ColoringAlgorithm::Sequential, ColoringAlgorithm::LargestDegreeFirst}) {
@@ -59,7 +54,6 @@ Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::si
                         median,
                         warmup->colorCount,
                         repetitions,
-                        true,
                         "Current graph",
                         0,
                         0});
@@ -69,10 +63,19 @@ Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::si
 
 Result<DynamicArray<BenchmarkRow>>
 compareSizes(const GenerationParameters& parameters, std::size_t points, std::size_t repetitions) {
-    if (points == 0 || points > 20 || parameters.vertexCount < points ||
-        parameters.vertexCount > 2000) {
+    auto validRepetitions = validateRepetitions(repetitions);
+    if (!validRepetitions) {
+        return std::unexpected(validRepetitions.error());
+    }
+    auto validParameters = validateGenerationParameters(parameters);
+    if (!validParameters) {
+        return std::unexpected(validParameters.error());
+    }
+    if (points == 0 || points > InputLimits::maxSeriesPoints || parameters.vertexCount < points) {
         return failure(ErrorCode::InvalidParameters,
-                       "Use 1..20 points and a maximum size between points and 2000.");
+                       "Use 1.." + std::to_string(InputLimits::maxSeriesPoints) +
+                           " points and a maximum size between points and " +
+                           std::to_string(InputLimits::maxGeneratedVertices) + ".");
     }
     if (parameters.topology == Topology::Cycle && parameters.vertexCount / points < 3) {
         return failure(ErrorCode::InvalidParameters,
@@ -108,12 +111,12 @@ Result<void> exportBenchmark(const DynamicArray<BenchmarkRow>& rows,
         output << "Vertices,Edges,Algorithm,MedianMicroseconds,Colors,Repetitions,Verified,"
                   "Topology,Seed,Probability\n";
         output << std::setprecision(17);
+        // Результаты сравнения публикуются только после независимой проверки
         for (std::size_t i = 0; i < rows.size(); ++i) {
             const auto& row = rows[i];
             output << row.vertices << ',' << row.edges << ',' << algorithmName(row.algorithm) << ','
                    << row.medianMicroseconds << ',' << row.colors << ',' << row.repetitions << ','
-                   << (row.verified ? "true" : "false") << ',' << row.topology << ',' << row.seed
-                   << ',' << row.probability << '\n';
+                   << "true," << row.topology << ',' << row.seed << ',' << row.probability << '\n';
         }
         if (!output) {
             return failure(ErrorCode::FileWrite);

@@ -2,6 +2,7 @@
 #include <charconv>
 #include <cmath>
 #include <functional>
+#include <input_limits.hpp>
 #include <memory>
 #include <numbers>
 #include <thread>
@@ -65,7 +66,7 @@ struct GenerationControls {
         fields->AddGrowableCol(1);
         label(parent, *fields, "Vertices / max. size");
         count = control<wxSpinCtrl>(parent, wxID_ANY);
-        count->SetRange(0, 2000);
+        count->SetRange(0, static_cast<int>(InputLimits::maxGeneratedVertices));
         count->SetValue(20);
         fields->Add(count.get(), 1, wxEXPAND);
         label(parent, *fields, "Topology");
@@ -315,7 +316,6 @@ class MainFrame final : public wxFrame {
             comparisons_->SetItem(index, 2, text(algorithmName(row.algorithm)));
             comparisons_->SetItem(index, 3, wxString::Format("%.3f", row.medianMicroseconds));
             comparisons_->SetItem(index, 4, wxString::Format("%zu", row.colors));
-            comparisons_->SetItem(index, 5, row.verified ? "Yes" : "No");
         }
         SetStatusText(currentPath_.empty() ? "Ready" : text(currentPath_.string()));
         SetTitle(application_.isModified() ? "DOR3 — Graph coloring *" : "DOR3 — Graph coloring");
@@ -330,18 +330,22 @@ class MainFrame final : public wxFrame {
         }
     }
 
+    void setBusy(bool busy) {
+        busy_ = busy;
+        enableActions(!busy);
+        canvas_->Refresh();
+        vertices_->Refresh();
+        SetStatusText(busy ? "Working..."
+                           : currentPath_.empty() ? "Ready" : text(currentPath_.string()));
+    }
+
     void runTask(std::function<Result<void>()> action,
                  bool showComparison = false,
                  std::function<void()> onSuccess = {}) {
         if (busy_) {
             return;
         }
-        busy_ = true;
-        enableActions(false);
-        canvas_->Refresh();
-        vertices_->Refresh();
-        SetStatusText("Working...");
-        worker_ = std::jthread(
+        auto task =
             [this, action = std::move(action), showComparison, onSuccess = std::move(onSuccess)] {
                 Result<void> result;
                 try {
@@ -351,8 +355,7 @@ class MainFrame final : public wxFrame {
                 }
                 CallAfter([this, result = std::move(result), showComparison, onSuccess] {
                     protect([&] {
-                        busy_ = false;
-                        enableActions(true);
+                        setBusy(false);
                         if (!result) {
                             showError(result.error());
                         } else {
@@ -370,7 +373,14 @@ class MainFrame final : public wxFrame {
                         }
                     });
                 });
-            });
+            };
+        try {
+            setBusy(true);
+            worker_ = std::jthread(std::move(task));
+        } catch (...) {
+            setBusy(false);
+            throw;
+        }
     }
 
     bool confirmReplacement() {
@@ -547,7 +557,7 @@ class MainFrame final : public wxFrame {
         tools->AddSpacer(8);
         label(*comparisonPanel_, *tools, "Repetitions (median)");
         repetitions_ = control<wxSpinCtrl>(*comparisonPanel_, wxID_ANY);
-        repetitions_->SetRange(1, 101);
+        repetitions_->SetRange(1, static_cast<int>(InputLimits::maxRepetitions));
         repetitions_->SetValue(7);
         tools->Add(repetitions_.get(), 0, wxEXPAND | wxTOP | wxBOTTOM, 6);
         button(*comparisonPanel_, *tools, "Compare current graph", [this] {
@@ -564,7 +574,7 @@ class MainFrame final : public wxFrame {
         seriesGeneration_.create(*comparisonPanel_, *tools);
         label(*comparisonPanel_, *tools, "Number of sizes");
         points_ = control<wxSpinCtrl>(*comparisonPanel_, wxID_ANY);
-        points_->SetRange(1, 20);
+        points_->SetRange(1, static_cast<int>(InputLimits::maxSeriesPoints));
         points_->SetValue(4);
         tools->Add(points_.get(), 0, wxEXPAND | wxTOP | wxBOTTOM, 6);
         button(*comparisonPanel_, *tools, "Compare size series", [this] {
@@ -603,14 +613,15 @@ class MainFrame final : public wxFrame {
             control<wxStaticText>(*comparisonPanel_,
                                   wxID_ANY,
                                   "Both methods use the same graph.\nIncludes ordering and "
-                                  "allocation;\nvalidation runs outside the timer.\n\nSeries keeps "
+                                  "allocation;\nvalidation runs outside the timer.\n"
+                                  "All displayed results are validated.\n\nSeries keeps "
                                   "the current graph.\nRows remain until the next comparison.");
         tools->Add(note.get(), 0, wxTOP, 10);
         addSizer(*root, std::move(tools), 0, wxEXPAND | wxALL, 12);
         comparisons_ = control<wxListCtrl>(
             *comparisonPanel_, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT);
         long column = 0;
-        for (auto name : {"Vertices", "Edges", "Algorithm", "Median (µs)", "Colors", "Valid"}) {
+        for (auto name : {"Vertices", "Edges", "Algorithm", "Median (µs)", "Colors"}) {
             comparisons_->InsertColumn(
                 column, text(name), wxLIST_FORMAT_LEFT, column == 2 ? 190 : 100);
             ++column;

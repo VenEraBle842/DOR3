@@ -2,6 +2,75 @@
 #include <generator.hpp>
 #include <gtest/gtest.h>
 #include <limits>
+#include <stdexcept>
+
+namespace {
+struct ThrowingMoveConstructor {
+    ThrowingMoveConstructor() = default;
+    ThrowingMoveConstructor(ThrowingMoveConstructor&&) noexcept(false) {}
+    ThrowingMoveConstructor& operator=(ThrowingMoveConstructor&&) noexcept = default;
+};
+
+struct ThrowingMoveAssignment {
+    ThrowingMoveAssignment() = default;
+    ThrowingMoveAssignment(ThrowingMoveAssignment&&) noexcept = default;
+    ThrowingMoveAssignment& operator=(ThrowingMoveAssignment&&) noexcept(false) {
+        return *this;
+    }
+};
+
+template <class T>
+concept AcceptedVertexData = requires { typename UndirectedGraph<T>; };
+
+static_assert(AcceptedVertexData<VertexData>);
+static_assert(AcceptedVertexData<int>);
+static_assert(AcceptedVertexData<std::string>);
+static_assert(!AcceptedVertexData<ThrowingMoveConstructor>);
+static_assert(!AcceptedVertexData<ThrowingMoveAssignment>);
+
+struct ThrowingDefaultData {
+    inline static int defaultsBeforeFailure = -1;
+    int value = 0;
+
+    ThrowingDefaultData() {
+        if (defaultsBeforeFailure == 0) {
+            throw std::runtime_error("Cannot construct vertex storage");
+        }
+        if (defaultsBeforeFailure > 0) {
+            --defaultsBeforeFailure;
+        }
+    }
+    explicit ThrowingDefaultData(int initialValue) : value(initialValue) {}
+    ThrowingDefaultData(ThrowingDefaultData&&) noexcept = default;
+    ThrowingDefaultData& operator=(ThrowingDefaultData&&) noexcept = default;
+};
+}
+
+TEST(Graph, StorageConstructionFailurePreservesVerticesAndEdges) {
+    UndirectedGraph<ThrowingDefaultData> graph;
+    for (int i = 0; i < 4; ++i) {
+        graph.addVertex(ThrowingDefaultData(i));
+    }
+    ASSERT_TRUE(graph.addEdge(0, 1));
+    ASSERT_TRUE(graph.addEdge(1, 3));
+
+    ThrowingDefaultData::defaultsBeforeFailure = 2;
+    EXPECT_THROW(graph.addVertex(ThrowingDefaultData(4)), std::runtime_error);
+    ThrowingDefaultData::defaultsBeforeFailure = -1;
+
+    EXPECT_EQ(graph.vertexCount(), 4);
+    EXPECT_EQ(graph.edgeCount(), 2);
+    for (VertexId i = 0; i < 4; ++i) {
+        EXPECT_EQ(graph.vertex(i)->get().value, static_cast<int>(i));
+    }
+    EXPECT_TRUE(graph.hasEdge(0, 1));
+    EXPECT_TRUE(graph.hasEdge(1, 0));
+    EXPECT_TRUE(graph.hasEdge(1, 3));
+    EXPECT_TRUE(graph.hasEdge(3, 1));
+    EXPECT_EQ(graph.addVertex(ThrowingDefaultData(4)), 4);
+    EXPECT_EQ(graph.vertexCount(), 5);
+    EXPECT_TRUE(graph.hasEdge(0, 1));
+}
 
 TEST(Graph, OwnsSymmetricEdgesAndRejectsInvalidChanges) {
     Graph graph;

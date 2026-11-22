@@ -13,13 +13,12 @@ enum class ErrorCode {
 };
 
 struct ErrorDescription {
-    std::string_view name;
     std::string_view message;
     std::string_view hint;
 };
 
 inline constexpr ErrorDescription errorCatalog[] = {
-#define DOR3_ERROR(code, message, hint) {#code, message, hint},
+#define DOR3_ERROR(code, message, hint) {message, hint},
 #include "error_catalog.def"
 #undef DOR3_ERROR
 };

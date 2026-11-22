@@ -1,9 +1,14 @@
 #include <application.hpp>
+#include <input_limits.hpp>
 #include <storage.hpp>
 
 Result<VertexId> GraphApplication::addVertex(std::string label) {
     if (label.find_first_of("\r\n") != std::string::npos) {
         return failure(ErrorCode::InvalidParameters, "Vertex labels must occupy one line.");
+    }
+    auto size = validateGraphSize(graph_.vertexCount() + 1, graph_.edgeCount());
+    if (!size) {
+        return std::unexpected(size.error());
     }
     auto id = graph_.addVertex({std::move(label)});
     changed();
@@ -11,6 +16,10 @@ Result<VertexId> GraphApplication::addVertex(std::string label) {
 }
 
 Result<void> GraphApplication::addEdge(VertexId first, VertexId second) {
+    auto size = validateGraphSize(graph_.vertexCount(), graph_.edgeCount() + 1);
+    if (!size) {
+        return size;
+    }
     auto result = graph_.addEdge(first, second);
     if (result) {
         changed();

@@ -1,6 +1,7 @@
 #pragma once
 #include "graph.hpp"
 #include <cstdint>
+#include <string_view>
 
 enum class Topology { Path, Cycle, Star, Complete, Random };
 
@@ -12,3 +13,5 @@ struct GenerationParameters {
 };
 
 Result<Graph> generateGraph(const GenerationParameters& parameters);
+Result<void> validateGenerationParameters(const GenerationParameters& parameters);
+std::string_view topologyName(Topology topology);

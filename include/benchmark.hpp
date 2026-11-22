@@ -10,7 +10,6 @@ struct BenchmarkRow {
     double medianMicroseconds = 0;
     std::size_t colors = 0;
     std::size_t repetitions = 0;
-    bool verified = false;
     std::string topology = "Current graph";
     std::uint32_t seed = 0;
     double probability = 0;
@@ -23,4 +22,3 @@ Result<DynamicArray<BenchmarkRow>> compareSizes(const GenerationParameters& para
                                                 std::size_t repetitions = 7);
 Result<void> exportBenchmark(const DynamicArray<BenchmarkRow>& rows,
                              const std::filesystem::path& path);
-std::string_view topologyName(Topology topology);

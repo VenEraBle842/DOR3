@@ -3,6 +3,7 @@ DOR3_ERROR(SelfLoop, "A self-loop cannot be colored.", "Choose two different ver
 DOR3_ERROR(DuplicateEdge, "This edge already exists.", "Each undirected edge can appear once.")
 DOR3_ERROR(MissingEdge, "This edge does not exist.", "Check both vertex numbers.")
 DOR3_ERROR(InvalidParameters, "Invalid parameters.", "Check the specified values.")
+DOR3_ERROR(LimitExceeded, "The graph exceeds the application limits.", "Use fewer vertices or edges.")
 DOR3_ERROR(InvalidColoring, "The coloring is invalid.", "Recompute the coloring for the current graph.")
 DOR3_ERROR(FileRead, "Cannot read graph file.", "Check the path and file format.")
 DOR3_ERROR(FileWrite, "Cannot save file.", "Check the path and directory permissions.")
