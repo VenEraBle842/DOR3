@@ -69,7 +69,9 @@ Result<Graph> generateGraph(const GenerationParameters& parameters) {
     } else {
         std::mt19937 random(parameters.seed);
         // Прямое преобразование результата генератора исключает различия реализаций распределений
-        const auto threshold = parameters.probability * 4294967296.0;
+        constexpr auto randomRange = static_cast<double>(std::mt19937::max()) -
+                                     static_cast<double>(std::mt19937::min()) + 1.0;
+        const auto threshold = parameters.probability * randomRange;
         for (std::size_t i = 0; i < parameters.vertexCount; ++i) {
             for (std::size_t j = i + 1; j < parameters.vertexCount; ++j) {
                 if (parameters.topology == Topology::Complete ||

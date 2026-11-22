@@ -3,6 +3,11 @@
 #include "generator.hpp"
 #include <filesystem>
 
+namespace BenchmarkDefaults {
+inline constexpr std::size_t repetitions = 7;
+inline constexpr std::size_t points = 4;
+}
+
 struct BenchmarkRow {
     std::size_t vertices = 0;
     std::size_t edges = 0;
@@ -15,10 +20,11 @@ struct BenchmarkRow {
     double probability = 0;
 };
 
-Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph,
-                                                     std::size_t repetitions = 7);
-Result<DynamicArray<BenchmarkRow>> compareSizes(const GenerationParameters& parameters,
-                                                std::size_t points = 4,
-                                                std::size_t repetitions = 7);
+Result<DynamicArray<BenchmarkRow>> compareAlgorithms(
+    const Graph& graph, std::size_t repetitions = BenchmarkDefaults::repetitions);
+Result<DynamicArray<BenchmarkRow>> compareSizes(
+    const GenerationParameters& parameters,
+    std::size_t points = BenchmarkDefaults::points,
+    std::size_t repetitions = BenchmarkDefaults::repetitions);
 Result<void> exportBenchmark(const DynamicArray<BenchmarkRow>& rows,
                              const std::filesystem::path& path);

@@ -2,6 +2,7 @@
 #include <chrono>
 #include <iomanip>
 #include <input_limits.hpp>
+#include <limits>
 #include <locale>
 #include <ostream>
 #include <storage.hpp>
@@ -21,7 +22,7 @@ Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::si
         return std::unexpected(validRepetitions.error());
     }
     DynamicArray<BenchmarkRow> rows;
-    for (auto algorithm : {ColoringAlgorithm::Sequential, ColoringAlgorithm::LargestDegreeFirst}) {
+    for (auto algorithm : supportedColoringAlgorithms) {
         auto warmup = colorGraph(graph, algorithm);
         if (!warmup) {
             return std::unexpected(warmup.error());
@@ -110,7 +111,7 @@ Result<void> exportBenchmark(const DynamicArray<BenchmarkRow>& rows,
         output.imbue(std::locale::classic());
         output << "Vertices,Edges,Algorithm,MedianMicroseconds,Colors,Repetitions,Verified,"
                   "Topology,Seed,Probability\n";
-        output << std::setprecision(17);
+        output << std::setprecision(std::numeric_limits<double>::max_digits10);
         // Результаты сравнения публикуются только после независимой проверки
         for (std::size_t i = 0; i < rows.size(); ++i) {
             const auto& row = rows[i];

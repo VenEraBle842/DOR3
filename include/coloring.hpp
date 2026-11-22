@@ -7,6 +7,9 @@
 
 enum class ColoringAlgorithm { Sequential, LargestDegreeFirst };
 
+inline constexpr ColoringAlgorithm supportedColoringAlgorithms[] = {
+    ColoringAlgorithm::Sequential, ColoringAlgorithm::LargestDegreeFirst};
+
 inline std::string_view algorithmName(ColoringAlgorithm algorithm) {
     switch (algorithm) {
     case ColoringAlgorithm::Sequential:

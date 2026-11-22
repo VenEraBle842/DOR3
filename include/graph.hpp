@@ -19,6 +19,8 @@ template <typename TData>
 requires std::default_initializable<TData> && std::movable<TData> &&
          std::is_nothrow_move_constructible_v<TData> && std::is_nothrow_move_assignable_v<TData>
 class UndirectedGraph {
+    static constexpr std::size_t initialCapacity = 4;
+
     DynamicArray<TData> vertices_;
     DynamicArray<DynamicArray<VertexId>> adjacency_;
     std::size_t edgeCount_ = 0;
@@ -38,7 +40,7 @@ class UndirectedGraph {
             return;
         }
 
-        const auto capacity = vertexCount() == 0 ? 4 : vertexCount() * 2;
+        const auto capacity = vertexCount() == 0 ? initialCapacity : vertexCount() * 2;
         DynamicArray<TData> vertices(capacity);
         DynamicArray<DynamicArray<VertexId>> adjacency(capacity);
 
@@ -56,7 +58,7 @@ class UndirectedGraph {
             return;
         }
 
-        const auto capacity = neighbors.empty() ? 4 : neighbors.size() * 2;
+        const auto capacity = neighbors.empty() ? initialCapacity : neighbors.size() * 2;
         DynamicArray<VertexId> replacement(capacity);
 
         for (std::size_t i = 0; i < neighbors.size(); ++i) {

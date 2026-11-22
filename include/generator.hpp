@@ -5,6 +5,9 @@
 
 enum class Topology { Path, Cycle, Star, Complete, Random };
 
+inline constexpr Topology supportedTopologies[] = {
+    Topology::Path, Topology::Cycle, Topology::Star, Topology::Complete, Topology::Random};
+
 struct GenerationParameters {
     std::size_t vertexCount = 20;
     Topology topology = Topology::Random;

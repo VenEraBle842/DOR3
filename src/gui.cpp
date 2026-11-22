@@ -1,6 +1,7 @@
 #include <application.hpp>
 #include <charconv>
 #include <cmath>
+#include <format>
 #include <functional>
 #include <input_limits.hpp>
 #include <memory>
@@ -20,6 +21,32 @@ wxString text(std::string_view value) {
 std::string utf8(const wxString& value) {
     return value.ToStdString(wxConvUTF8);
 }
+
+template <class T, std::size_t Size, class Name>
+void fillChoice(wxChoice& choice, const T (&values)[Size], T selected, Name name) {
+    choice.Clear();
+    for (auto value : values) {
+        const auto index = choice.Append(text(name(value)));
+        if (value == selected) {
+            choice.SetSelection(static_cast<int>(index));
+        }
+    }
+}
+
+template <class T, std::size_t Size>
+Result<T> readChoice(const wxChoice& choice, const T (&values)[Size], std::string_view field) {
+    const auto index = choice.GetSelection();
+    if (index < 0 || static_cast<std::size_t>(index) >= Size) {
+        return failure(ErrorCode::InvalidParameters, "Select a valid " + std::string(field) + ".");
+    }
+    return values[static_cast<std::size_t>(index)];
+}
+
+struct TableColumn {
+    long index;
+    std::string_view caption;
+    int width;
+};
 
 // wxWidgets владеет дочерними окнами. Поля хранят слабые ссылки с отслеживанием их удаления
 template <class T, class... Args>
@@ -62,25 +89,24 @@ struct GenerationControls {
     wxWeakRef<wxTextCtrl> probability, seed;
 
     void create(wxWindow& parent, wxSizer& sizer) {
+        const GenerationParameters defaults;
         auto fields = std::make_unique<wxFlexGridSizer>(2, 6, 6);
         fields->AddGrowableCol(1);
         label(parent, *fields, "Vertices / max. size");
         count = control<wxSpinCtrl>(parent, wxID_ANY);
         count->SetRange(0, static_cast<int>(InputLimits::maxGeneratedVertices));
-        count->SetValue(20);
+        count->SetValue(static_cast<int>(defaults.vertexCount));
         fields->Add(count.get(), 1, wxEXPAND);
         label(parent, *fields, "Topology");
         topology = control<wxChoice>(parent, wxID_ANY);
-        for (auto name : {"Path", "Cycle", "Star", "Complete", "Random"}) {
-            topology->Append(name);
-        }
-        topology->SetSelection(4);
+        fillChoice(*topology, supportedTopologies, defaults.topology, topologyName);
         fields->Add(topology.get(), 1, wxEXPAND);
         label(parent, *fields, "Edge probability");
-        probability = control<wxTextCtrl>(parent, wxID_ANY, "0.15");
+        probability = control<wxTextCtrl>(
+            parent, wxID_ANY, text(std::format("{}", defaults.probability)));
         fields->Add(probability.get(), 1, wxEXPAND);
         label(parent, *fields, "Seed");
-        seed = control<wxTextCtrl>(parent, wxID_ANY, "100");
+        seed = control<wxTextCtrl>(parent, wxID_ANY, text(std::to_string(defaults.seed)));
         fields->Add(seed.get(), 1, wxEXPAND);
         addSizer(sizer, std::move(fields), 0, wxEXPAND | wxBOTTOM, 8);
     }
@@ -94,14 +120,24 @@ struct GenerationControls {
         if (!parsedSeed) {
             return std::unexpected(parsedSeed.error());
         }
+        auto selectedTopology = readChoice(*topology, supportedTopologies, "topology");
+        if (!selectedTopology) {
+            return std::unexpected(selectedTopology.error());
+        }
         return GenerationParameters{static_cast<std::size_t>(count->GetValue()),
-                                    static_cast<Topology>(topology->GetSelection()),
+                                    *selectedTopology,
                                     *parsedProbability,
                                     *parsedSeed};
     }
 };
 
 class GraphCanvas final : public wxPanel {
+    static constexpr std::size_t maxDrawnVertices = 200;
+    static constexpr int vertexRadius = 15;
+    static constexpr double hueStep = 0.61803398875;
+    static constexpr double colorSaturation = 0.42;
+    static constexpr double colorBrightness = 0.96;
+
     const GraphApplication& application_;
     const bool& busy_;
 
@@ -111,7 +147,7 @@ class GraphCanvas final : public wxPanel {
 
     static wxColour color(std::size_t index) {
         const auto rgb = wxImage::HSVtoRGB(wxImage::HSVValue(
-            std::fmod(static_cast<double>(index) * 0.61803398875, 1.0), 0.42, 0.96));
+            std::fmod(static_cast<double>(index) * hueStep, 1.0), colorSaturation, colorBrightness));
         return wxColour(rgb.red, rgb.green, rgb.blue);
     }
 
@@ -130,9 +166,11 @@ class GraphCanvas final : public wxPanel {
             dc.DrawText("Add vertices or generate a graph to begin.", 18, 18);
             return;
         }
-        if (count > 200) {
-            dc.DrawText("Drawing is available for up to 200 vertices.\nAll vertices and neighbors "
-                        "are listed in the table below.",
+        if (count > maxDrawnVertices) {
+            dc.DrawText(wxString::Format(
+                            "Drawing is available for up to %zu vertices.\n"
+                            "All vertices and neighbors are listed in the table below.",
+                            maxDrawnVertices),
                         18,
                         18);
             return;
@@ -163,7 +201,7 @@ class GraphCanvas final : public wxPanel {
             dc.SetBrush(wxBrush(application_.coloring() ? color(application_.coloring()->colors[i])
                                                         : wxColour(224, 232, 245)));
             dc.SetPen(wxPen(wxColour(75, 87, 110), 1));
-            dc.DrawCircle(positions[i].x, positions[i].y, 15);
+            dc.DrawCircle(positions[i].x, positions[i].y, vertexRadius);
             const auto id = wxString::Format("%zu", i);
             const auto extent = dc.GetTextExtent(id);
             dc.DrawText(id, positions[i].x - extent.x / 2, positions[i].y - extent.y / 2);
@@ -184,6 +222,8 @@ public:
 };
 
 class VertexTable final : public wxListCtrl {
+    enum Column : long { Vertex, Label, Degree, Color, Step, Neighbors };
+
     const GraphApplication& application_;
     const bool& busy_;
     DynamicArray<std::size_t> steps_;
@@ -199,19 +239,19 @@ class VertexTable final : public wxListCtrl {
         }
         const auto& neighbors = graph.neighbors(id)->get();
         switch (column) {
-        case 0:
+        case Column::Vertex:
             return wxString::Format("%zu", id);
-        case 1:
+        case Column::Label:
             return text(graph.vertex(id)->get().label);
-        case 2:
+        case Column::Degree:
             return wxString::Format("%zu", neighbors.size());
-        case 3:
+        case Column::Color:
             return application_.coloring()
                        ? wxString::Format("C%zu", application_.coloring()->colors[id])
                        : "—";
-        case 4:
+        case Column::Step:
             return application_.coloring() ? wxString::Format("%zu", steps_[id] + 1) : "—";
-        case 5: {
+        case Column::Neighbors: {
             wxString list;
             for (std::size_t i = 0; i < neighbors.size(); ++i) {
                 if (i) {
@@ -231,10 +271,15 @@ public:
         : wxListCtrl(
               parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT | wxLC_VIRTUAL),
           application_(application), busy_(busy) {
-        long index = 0;
-        for (auto name : {"Vertex", "Label", "Degree", "Color", "Step", "Neighbors"}) {
-            InsertColumn(index, name, wxLIST_FORMAT_LEFT, index == 5 ? 400 : index == 1 ? 160 : 75);
-            ++index;
+        constexpr TableColumn columns[] = {
+            {Column::Vertex, "Vertex", 75},
+            {Column::Label, "Label", 160},
+            {Column::Degree, "Degree", 75},
+            {Column::Color, "Color", 75},
+            {Column::Step, "Step", 75},
+            {Column::Neighbors, "Neighbors", 400}};
+        for (const auto& column : columns) {
+            InsertColumn(column.index, text(column.caption), wxLIST_FORMAT_LEFT, column.width);
         }
         SetMinSize(wxSize(350, 180));
     }
@@ -257,11 +302,14 @@ public:
 };
 
 class MainFrame final : public wxFrame {
+    enum ComparisonColumn : long { Vertices, Edges, Algorithm, MedianTime, Colors };
+
     GraphApplication application_;
     bool busy_ = false;
     bool closeRequested_ = false;
     std::filesystem::path currentPath_;
     wxWeakRef<wxNotebook> notebook_;
+    std::size_t comparisonPageIndex_{};
     wxWeakRef<wxPanel> graphPanel_, comparisonPanel_;
     wxWeakRef<GraphCanvas> canvas_;
     wxWeakRef<VertexTable> vertices_;
@@ -310,12 +358,17 @@ class MainFrame final : public wxFrame {
         const auto& rows = application_.measurements();
         for (std::size_t i = 0; i < rows.size(); ++i) {
             const auto& row = rows[i];
-            const auto index = comparisons_->InsertItem(static_cast<long>(i),
-                                                        wxString::Format("%zu", row.vertices));
-            comparisons_->SetItem(index, 1, wxString::Format("%zu", row.edges));
-            comparisons_->SetItem(index, 2, text(algorithmName(row.algorithm)));
-            comparisons_->SetItem(index, 3, wxString::Format("%.3f", row.medianMicroseconds));
-            comparisons_->SetItem(index, 4, wxString::Format("%zu", row.colors));
+            const auto index = comparisons_->InsertItem(static_cast<long>(i), wxEmptyString);
+            comparisons_->SetItem(index, ComparisonColumn::Vertices,
+                                   wxString::Format("%zu", row.vertices));
+            comparisons_->SetItem(index, ComparisonColumn::Edges,
+                                   wxString::Format("%zu", row.edges));
+            comparisons_->SetItem(index, ComparisonColumn::Algorithm,
+                                   text(algorithmName(row.algorithm)));
+            comparisons_->SetItem(index, ComparisonColumn::MedianTime,
+                                   wxString::Format("%.3f", row.medianMicroseconds));
+            comparisons_->SetItem(index, ComparisonColumn::Colors,
+                                   wxString::Format("%zu", row.colors));
         }
         SetStatusText(currentPath_.empty() ? "Ready" : text(currentPath_.string()));
         SetTitle(application_.isModified() ? "DOR3 — Graph coloring *" : "DOR3 — Graph coloring");
@@ -363,7 +416,7 @@ class MainFrame final : public wxFrame {
                                 onSuccess();
                             }
                             if (showComparison) {
-                                notebook_->SetSelection(1);
+                                notebook_->SetSelection(comparisonPageIndex_);
                             }
                         }
                         refresh();
@@ -513,13 +566,16 @@ class MainFrame final : public wxFrame {
         label(*graphPanel_, *tools, "Coloring algorithm");
         tools->AddSpacer(8);
         algorithm_ = control<wxChoice>(*graphPanel_, wxID_ANY);
-        algorithm_->Append("Sequential greedy");
-        algorithm_->Append("Largest degree first");
-        algorithm_->SetSelection(0);
+        fillChoice(*algorithm_, supportedColoringAlgorithms, ColoringAlgorithm::Sequential,
+                   algorithmName);
         tools->Add(algorithm_.get(), 0, wxEXPAND | wxBOTTOM, 6);
         button(*graphPanel_, *tools, "Color graph", [this] {
-            const auto algorithm = static_cast<ColoringAlgorithm>(algorithm_->GetSelection());
-            runTask([this, algorithm] {
+            auto selectedAlgorithm = readChoice(*algorithm_, supportedColoringAlgorithms, "algorithm");
+            if (!selectedAlgorithm) {
+                showError(selectedAlgorithm.error());
+                return;
+            }
+            runTask([this, algorithm = *selectedAlgorithm] {
                 return application_.run(algorithm);
             });
         });
@@ -558,7 +614,7 @@ class MainFrame final : public wxFrame {
         label(*comparisonPanel_, *tools, "Repetitions (median)");
         repetitions_ = control<wxSpinCtrl>(*comparisonPanel_, wxID_ANY);
         repetitions_->SetRange(1, static_cast<int>(InputLimits::maxRepetitions));
-        repetitions_->SetValue(7);
+        repetitions_->SetValue(static_cast<int>(BenchmarkDefaults::repetitions));
         tools->Add(repetitions_.get(), 0, wxEXPAND | wxTOP | wxBOTTOM, 6);
         button(*comparisonPanel_, *tools, "Compare current graph", [this] {
             const auto repetitions = static_cast<std::size_t>(repetitions_->GetValue());
@@ -575,7 +631,7 @@ class MainFrame final : public wxFrame {
         label(*comparisonPanel_, *tools, "Number of sizes");
         points_ = control<wxSpinCtrl>(*comparisonPanel_, wxID_ANY);
         points_->SetRange(1, static_cast<int>(InputLimits::maxSeriesPoints));
-        points_->SetValue(4);
+        points_->SetValue(static_cast<int>(BenchmarkDefaults::points));
         tools->Add(points_.get(), 0, wxEXPAND | wxTOP | wxBOTTOM, 6);
         button(*comparisonPanel_, *tools, "Compare size series", [this] {
             auto parameters = seriesGeneration_.read();
@@ -620,14 +676,19 @@ class MainFrame final : public wxFrame {
         addSizer(*root, std::move(tools), 0, wxEXPAND | wxALL, 12);
         comparisons_ = control<wxListCtrl>(
             *comparisonPanel_, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT);
-        long column = 0;
-        for (auto name : {"Vertices", "Edges", "Algorithm", "Median (µs)", "Colors"}) {
-            comparisons_->InsertColumn(
-                column, text(name), wxLIST_FORMAT_LEFT, column == 2 ? 190 : 100);
-            ++column;
+        constexpr TableColumn columns[] = {
+            {ComparisonColumn::Vertices, "Vertices", 100},
+            {ComparisonColumn::Edges, "Edges", 100},
+            {ComparisonColumn::Algorithm, "Algorithm", 190},
+            {ComparisonColumn::MedianTime, "Median (µs)", 100},
+            {ComparisonColumn::Colors, "Colors", 100}};
+        for (const auto& column : columns) {
+            comparisons_->InsertColumn(column.index, text(column.caption), wxLIST_FORMAT_LEFT,
+                                        column.width);
         }
         root->Add(comparisons_.get(), 1, wxEXPAND | wxALL, 12);
         comparisonPanel_->SetSizer(root.release());
+        comparisonPageIndex_ = notebook.GetPageCount();
         notebook.AddPage(comparisonPanel_.get(), "Algorithm comparison");
     }
 

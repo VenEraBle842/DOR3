@@ -6,7 +6,13 @@
 #include <locale>
 #include <sstream>
 #include <storage.hpp>
+#include <string_view>
 #include <system_error>
+
+namespace {
+constexpr std::string_view graphFileHeader = "DOR3_GRAPH 1";
+constexpr int maxTemporaryDirectoryAttempts = 16;
+}
 
 struct TemporaryDirectory {
     std::filesystem::path path;
@@ -19,7 +25,7 @@ struct TemporaryDirectory {
 
 static Result<std::filesystem::path> temporaryDirectory(const std::filesystem::path& target) {
     const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    for (int attempt = 0; attempt < 16; ++attempt) {
+    for (int attempt = 0; attempt < maxTemporaryDirectoryAttempts; ++attempt) {
         const auto path = target.parent_path() / (".dor3-write-" + std::to_string(timestamp) + "-" +
                                                   std::to_string(attempt));
         std::error_code error;
@@ -44,8 +50,12 @@ static bool readUnsigned(std::istream& input, std::size_t& value) {
 
 Result<Graph> readGraph(std::istream& input) {
     std::string line;
-    if (!std::getline(input, line) || (line != "DOR3_GRAPH 1" && line != "DOR3_GRAPH 1\r")) {
-        return failure(ErrorCode::FileRead, "Expected DOR3_GRAPH 1 header.");
+    std::getline(input, line);
+    if (line.ends_with('\r')) {
+        line.pop_back();
+    }
+    if (!input || line != graphFileHeader) {
+        return failure(ErrorCode::FileRead, "Expected " + std::string(graphFileHeader) + " header.");
     }
     std::size_t vertices = 0, edges = 0;
     if (!std::getline(input, line)) {
@@ -106,7 +116,7 @@ Result<void> writeGraph(const Graph& graph, std::ostream& output) {
         return size;
     }
     output.imbue(std::locale::classic());
-    output << "DOR3_GRAPH 1\n" << graph.vertexCount() << ' ' << graph.edgeCount() << '\n';
+    output << graphFileHeader << '\n' << graph.vertexCount() << ' ' << graph.edgeCount() << '\n';
     for (std::size_t i = 0; i < graph.vertexCount(); ++i) {
         const auto& label = graph.vertex(i)->get().label;
         if (label.find_first_of("\r\n") != std::string::npos) {
