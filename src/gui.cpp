@@ -3,7 +3,7 @@
 #include <cmath>
 #include <format>
 #include <functional>
-#include <input_limits.hpp>
+#include <application_limits.hpp>
 #include <memory>
 #include <numbers>
 #include <thread>
@@ -14,11 +14,11 @@
 #include <wx/weakref.h>
 #include <wx/wx.h>
 
-wxString text(std::string_view value) {
+wxString convertToWxString(std::string_view value) {
     return wxString::FromUTF8(value.data(), value.size());
 }
 
-std::string utf8(const wxString& value) {
+std::string convertToUtf8(const wxString& value) {
     return value.ToStdString(wxConvUTF8);
 }
 
@@ -26,7 +26,7 @@ template <class T, std::size_t Size, class Name>
 void fillChoice(wxChoice& choice, const T (&values)[Size], T selected, Name name) {
     choice.Clear();
     for (auto value : values) {
-        const auto index = choice.Append(text(name(value)));
+        const auto index = choice.Append(convertToWxString(name(value)));
         if (value == selected) {
             choice.SetSelection(static_cast<int>(index));
         }
@@ -50,7 +50,7 @@ struct TableColumn {
 
 // wxWidgets владеет дочерними окнами. Поля хранят слабые ссылки с отслеживанием их удаления
 template <class T, class... Args>
-wxWeakRef<T> control(wxWindow& parent, Args&&... args) {
+wxWeakRef<T> createControl(wxWindow& parent, Args&&... args) {
     auto owned = std::make_unique<T>(&parent, std::forward<Args>(args)...);
     wxWeakRef<T> reference(owned.get());
     (void)owned.release();
@@ -67,17 +67,17 @@ void addSizer(wxSizer& parent,
     (void)child.release();
 }
 
-void label(wxWindow& parent, wxSizer& sizer, const wxString& value, int flags = wxRIGHT) {
-    auto item = control<wxStaticText>(parent, wxID_ANY, value);
+void addLabel(wxWindow& parent, wxSizer& sizer, const wxString& value, int flags = wxRIGHT) {
+    auto item = createControl<wxStaticText>(parent, wxID_ANY, value);
     sizer.Add(item.get(), 0, flags, 8);
 }
 
 template <class T>
 Result<T> parseNumber(wxString value, std::string_view field) {
-    auto string = utf8(value.Trim().Trim(false));
+    auto inputText = convertToUtf8(value.Trim().Trim(false));
     T parsed{};
-    const auto result = std::from_chars(string.data(), string.data() + string.size(), parsed);
-    if (result.ec != std::errc{} || result.ptr != string.data() + string.size()) {
+    const auto result = std::from_chars(inputText.data(), inputText.data() + inputText.size(), parsed);
+    if (result.ec != std::errc{} || result.ptr != inputText.data() + inputText.size()) {
         return failure(ErrorCode::InvalidParameters, "Invalid " + std::string(field) + ".");
     }
     return parsed;
@@ -86,33 +86,33 @@ Result<T> parseNumber(wxString value, std::string_view field) {
 struct GenerationControls {
     wxWeakRef<wxSpinCtrl> count;
     wxWeakRef<wxChoice> topology;
-    wxWeakRef<wxTextCtrl> probability, seed;
+    wxWeakRef<wxTextCtrl> edgeProbability, seed;
 
     void create(wxWindow& parent, wxSizer& sizer) {
         const GenerationParameters defaults;
         auto fields = std::make_unique<wxFlexGridSizer>(2, 6, 6);
         fields->AddGrowableCol(1);
-        label(parent, *fields, "Vertices / max. size", wxALIGN_CENTER_VERTICAL | wxRIGHT);
-        count = control<wxSpinCtrl>(parent, wxID_ANY);
-        count->SetRange(0, static_cast<int>(InputLimits::maxGeneratedVertices));
+        addLabel(parent, *fields, "Vertices / max. size", wxALIGN_CENTER_VERTICAL | wxRIGHT);
+        count = createControl<wxSpinCtrl>(parent, wxID_ANY);
+        count->SetRange(0, static_cast<int>(ApplicationLimits::maxGeneratedVertices));
         count->SetValue(static_cast<int>(defaults.vertexCount));
         fields->Add(count.get(), 1, wxEXPAND);
-        label(parent, *fields, "Topology", wxALIGN_CENTER_VERTICAL | wxRIGHT);
-        topology = control<wxChoice>(parent, wxID_ANY);
+        addLabel(parent, *fields, "Topology", wxALIGN_CENTER_VERTICAL | wxRIGHT);
+        topology = createControl<wxChoice>(parent, wxID_ANY);
         fillChoice(*topology, supportedTopologies, defaults.topology, topologyName);
         fields->Add(topology.get(), 1, wxEXPAND);
-        label(parent, *fields, "Edge probability", wxALIGN_CENTER_VERTICAL | wxRIGHT);
-        probability = control<wxTextCtrl>(
-            parent, wxID_ANY, text(std::format("{}", defaults.probability)));
-        fields->Add(probability.get(), 1, wxEXPAND);
-        label(parent, *fields, "Seed", wxALIGN_CENTER_VERTICAL | wxRIGHT);
-        seed = control<wxTextCtrl>(parent, wxID_ANY, text(std::to_string(defaults.seed)));
+        addLabel(parent, *fields, "Edge probability", wxALIGN_CENTER_VERTICAL | wxRIGHT);
+        edgeProbability = createControl<wxTextCtrl>(
+            parent, wxID_ANY, convertToWxString(std::format("{}", defaults.edgeProbability)));
+        fields->Add(edgeProbability.get(), 1, wxEXPAND);
+        addLabel(parent, *fields, "Seed", wxALIGN_CENTER_VERTICAL | wxRIGHT);
+        seed = createControl<wxTextCtrl>(parent, wxID_ANY, convertToWxString(std::to_string(defaults.seed)));
         fields->Add(seed.get(), 1, wxEXPAND);
         addSizer(sizer, std::move(fields), 0, wxEXPAND | wxBOTTOM, 8);
     }
 
     Result<GenerationParameters> read() const {
-        auto parsedProbability = parseNumber<double>(probability->GetValue(), "probability");
+        auto parsedProbability = parseNumber<double>(edgeProbability->GetValue(), "probability");
         auto parsedSeed = parseNumber<std::uint32_t>(seed->GetValue(), "seed");
         if (!parsedProbability) {
             return std::unexpected(parsedProbability.error());
@@ -145,7 +145,7 @@ class GraphCanvas final : public wxPanel {
         int x, y;
     };
 
-    static wxColour color(std::size_t index) {
+    static wxColour colorForIndex(std::size_t index) {
         const auto rgb = wxImage::HSVtoRGB(wxImage::HSVValue(
             std::fmod(static_cast<double>(index) * hueStep, 1.0), colorSaturation, colorBrightness));
         return wxColour(rgb.red, rgb.green, rgb.blue);
@@ -198,7 +198,7 @@ class GraphCanvas final : public wxPanel {
             }
         }
         for (std::size_t i = 0; i < count; ++i) {
-            dc.SetBrush(wxBrush(application_.coloring() ? color(application_.coloring()->colors[i])
+            dc.SetBrush(wxBrush(application_.coloring() ? colorForIndex(application_.coloring()->colors[i])
                                                         : wxColour(224, 232, 245)));
             dc.SetPen(wxPen(wxColour(75, 87, 110), 1));
             dc.DrawCircle(positions[i].x, positions[i].y, vertexRadius);
@@ -226,7 +226,7 @@ class VertexTable final : public wxListCtrl {
 
     const GraphApplication& application_;
     const bool& busy_;
-    DynamicArray<std::size_t> steps_;
+    DynamicArray<std::size_t> processingSteps_;
 
     wxString OnGetItemText(long row, long column) const override {
         if (busy_) {
@@ -242,7 +242,7 @@ class VertexTable final : public wxListCtrl {
         case Column::Vertex:
             return wxString::Format("%zu", id);
         case Column::Label:
-            return text(graph.vertex(id)->get().label);
+            return convertToWxString(graph.vertex(id)->get().label);
         case Column::Degree:
             return wxString::Format("%zu", neighbors.size());
         case Column::Color:
@@ -250,7 +250,7 @@ class VertexTable final : public wxListCtrl {
                        ? wxString::Format("C%zu", application_.coloring()->colors[id])
                        : "—";
         case Column::Step:
-            return application_.coloring() ? wxString::Format("%zu", steps_[id] + 1) : "—";
+            return application_.coloring() ? wxString::Format("%zu", processingSteps_[id] + 1) : "—";
         case Column::Neighbors: {
             wxString list;
             for (std::size_t i = 0; i < neighbors.size(); ++i) {
@@ -279,21 +279,21 @@ public:
             {Column::Step, "Step", 75},
             {Column::Neighbors, "Neighbors", 400}};
         for (const auto& column : columns) {
-            InsertColumn(column.index, text(column.caption), wxLIST_FORMAT_LEFT, column.width);
+            InsertColumn(column.index, convertToWxString(column.caption), wxLIST_FORMAT_LEFT, column.width);
         }
         SetMinSize(wxSize(350, 180));
     }
 
     void update() {
-        steps_.clear();
+        processingSteps_.clear();
         const auto count = application_.graph().vertexCount();
         for (std::size_t i = 0; i < count; ++i) {
-            steps_.push_back(0);
+            processingSteps_.push_back(0);
         }
         if (application_.coloring()) {
-            const auto& order = application_.coloring()->order;
+            const auto& processingOrder = application_.coloring()->processingOrder;
             for (std::size_t i = 0; i < count; ++i) {
-                steps_[order[i]] = i;
+                processingSteps_[processingOrder[i]] = i;
             }
         }
         SetItemCount(static_cast<long>(count));
@@ -312,21 +312,21 @@ class MainFrame final : public wxFrame {
     std::size_t comparisonPageIndex_{};
     wxWeakRef<wxPanel> graphPanel_, comparisonPanel_;
     wxWeakRef<GraphCanvas> canvas_;
-    wxWeakRef<VertexTable> vertices_;
+    wxWeakRef<VertexTable> vertexTable_;
     wxWeakRef<wxStaticText> summary_;
     wxWeakRef<wxTextCtrl> vertexLabel_, edgeFirst_, edgeSecond_;
     wxWeakRef<wxChoice> algorithm_;
-    wxWeakRef<wxSpinCtrl> repetitions_, points_;
-    wxWeakRef<wxListCtrl> comparisons_;
-    GenerationControls generation_, seriesGeneration_;
+    wxWeakRef<wxSpinCtrl> repetitionCount_, sizeCount_;
+    wxWeakRef<wxListCtrl> benchmarkTable_;
+    GenerationControls generationControls_, seriesGenerationControls_;
     std::jthread worker_;
 
     void showError(const Error& error) {
-        wxMessageBox(text(formatError(error)), "DOR3", wxOK | wxICON_ERROR, this);
+        wxMessageBox(convertToWxString(formatError(error)), "DOR3", wxOK | wxICON_ERROR, this);
     }
 
     template <class Action>
-    void protect(Action&& action) {
+    void executeWithErrorHandling(Action&& action) {
         try {
             action();
         } catch (const std::exception& error) {
@@ -335,17 +335,17 @@ class MainFrame final : public wxFrame {
     }
 
     template <class Action>
-    void button(wxWindow& parent, wxSizer& sizer, const wxString& caption, Action action) {
-        auto item = control<wxButton>(parent, wxID_ANY, caption);
+    void addButton(wxWindow& parent, wxSizer& sizer, const wxString& caption, Action action) {
+        auto item = createControl<wxButton>(parent, wxID_ANY, caption);
         sizer.Add(item.get(), 0, wxEXPAND | wxBOTTOM, 6);
         item->Bind(wxEVT_BUTTON, [this, action](wxCommandEvent&) {
-            protect(action);
+            executeWithErrorHandling(action);
         });
     }
 
     void refresh() {
         canvas_->Refresh();
-        vertices_->update();
+        vertexTable_->update();
         wxString summary = wxString::Format("Vertices: %zu   Edges: %zu",
                                             application_.graph().vertexCount(),
                                             application_.graph().edgeCount());
@@ -354,28 +354,28 @@ class MainFrame final : public wxFrame {
                 wxString::Format("   Colors: %zu   Validated", application_.coloring()->colorCount);
         }
         summary_->SetLabel(summary);
-        comparisons_->DeleteAllItems();
+        benchmarkTable_->DeleteAllItems();
         const auto& rows = application_.measurements();
         for (std::size_t i = 0; i < rows.size(); ++i) {
             const auto& row = rows[i];
-            const auto index = comparisons_->InsertItem(static_cast<long>(i), wxEmptyString);
-            comparisons_->SetItem(index, ComparisonColumn::Vertices,
-                                   wxString::Format("%zu", row.vertices));
-            comparisons_->SetItem(index, ComparisonColumn::Edges,
-                                   wxString::Format("%zu", row.edges));
-            comparisons_->SetItem(index, ComparisonColumn::Algorithm,
-                                   text(algorithmName(row.algorithm)));
-            comparisons_->SetItem(index, ComparisonColumn::MedianTime,
+            const auto index = benchmarkTable_->InsertItem(static_cast<long>(i), wxEmptyString);
+            benchmarkTable_->SetItem(index, ComparisonColumn::Vertices,
+                                   wxString::Format("%zu", row.vertexCount));
+            benchmarkTable_->SetItem(index, ComparisonColumn::Edges,
+                                   wxString::Format("%zu", row.edgeCount));
+            benchmarkTable_->SetItem(index, ComparisonColumn::Algorithm,
+                                   convertToWxString(algorithmName(row.algorithm)));
+            benchmarkTable_->SetItem(index, ComparisonColumn::MedianTime,
                                    wxString::Format("%.3f", row.medianMicroseconds));
-            comparisons_->SetItem(index, ComparisonColumn::Colors,
-                                   wxString::Format("%zu", row.colors));
+            benchmarkTable_->SetItem(index, ComparisonColumn::Colors,
+                                   wxString::Format("%zu", row.colorCount));
         }
-        SetStatusText(currentPath_.empty() ? "Ready" : text(currentPath_.string()));
+        SetStatusText(currentPath_.empty() ? "Ready" : convertToWxString(currentPath_.string()));
         SetTitle(application_.isModified() ? "DOR3 — Graph coloring *" : "DOR3 — Graph coloring");
         Layout();
     }
 
-    void enableActions(bool enabled) {
+    void setActionsEnabled(bool enabled) {
         graphPanel_->Enable(enabled);
         comparisonPanel_->Enable(enabled);
         for (int id : {wxID_NEW, wxID_OPEN, wxID_SAVE, wxID_SAVEAS}) {
@@ -385,14 +385,14 @@ class MainFrame final : public wxFrame {
 
     void setBusy(bool busy) {
         busy_ = busy;
-        enableActions(!busy);
+        setActionsEnabled(!busy);
         canvas_->Refresh();
-        vertices_->Refresh();
+        vertexTable_->Refresh();
         SetStatusText(busy ? "Working..."
-                           : currentPath_.empty() ? "Ready" : text(currentPath_.string()));
+                           : currentPath_.empty() ? "Ready" : convertToWxString(currentPath_.string()));
     }
 
-    void runTask(std::function<Result<void>()> action,
+    void runBackgroundTask(std::function<Result<void>()> action,
                  bool showComparison = false,
                  std::function<void()> onSuccess = {}) {
         if (busy_) {
@@ -407,7 +407,7 @@ class MainFrame final : public wxFrame {
                     result = failure(ErrorCode::Unexpected, error.what());
                 }
                 CallAfter([this, result = std::move(result), showComparison, onSuccess] {
-                    protect([&] {
+                    executeWithErrorHandling([&] {
                         setBusy(false);
                         if (!result) {
                             showError(result.error());
@@ -458,7 +458,7 @@ class MainFrame final : public wxFrame {
             if (dialog.ShowModal() != wxID_OK) {
                 return false;
             }
-            path = utf8(dialog.GetPath());
+            path = convertToUtf8(dialog.GetPath());
         }
         auto result = application_.save(path);
         if (!result) {
@@ -480,8 +480,8 @@ class MainFrame final : public wxFrame {
         if (dialog.ShowModal() != wxID_OK || !confirmReplacement()) {
             return;
         }
-        const auto path = std::filesystem::path(utf8(dialog.GetPath()));
-        runTask(
+        const auto path = std::filesystem::path(convertToUtf8(dialog.GetPath()));
+        runBackgroundTask(
             [this, path] {
                 return application_.open(path);
             },
@@ -512,14 +512,14 @@ class MainFrame final : public wxFrame {
     }
 
     void buildGraphPage(wxNotebook& notebook) {
-        graphPanel_ = control<wxPanel>(notebook, wxID_ANY);
+        graphPanel_ = createControl<wxPanel>(notebook, wxID_ANY);
         auto root = std::make_unique<wxBoxSizer>(wxHORIZONTAL);
         auto tools = std::make_unique<wxBoxSizer>(wxVERTICAL);
-        label(*graphPanel_, *tools, "Manual editing");
-        vertexLabel_ = control<wxTextCtrl>(*graphPanel_, wxID_ANY, "Vertex");
+        addLabel(*graphPanel_, *tools, "Manual editing");
+        vertexLabel_ = createControl<wxTextCtrl>(*graphPanel_, wxID_ANY, "Vertex");
         tools->Add(vertexLabel_.get(), 0, wxEXPAND | wxTOP | wxBOTTOM, 6);
-        button(*graphPanel_, *tools, "Add vertex", [this] {
-            auto result = application_.addVertex(utf8(vertexLabel_->GetValue()));
+        addButton(*graphPanel_, *tools, "Add vertex", [this] {
+            auto result = application_.addVertex(convertToUtf8(vertexLabel_->GetValue()));
             if (!result) {
                 showError(result.error());
             } else {
@@ -528,24 +528,24 @@ class MainFrame final : public wxFrame {
         });
         auto edge = std::make_unique<wxBoxSizer>(wxHORIZONTAL);
         edgeFirst_ =
-            control<wxTextCtrl>(*graphPanel_, wxID_ANY, "0", wxDefaultPosition, wxSize(90, -1));
+            createControl<wxTextCtrl>(*graphPanel_, wxID_ANY, "0", wxDefaultPosition, wxSize(90, -1));
         edgeSecond_ =
-            control<wxTextCtrl>(*graphPanel_, wxID_ANY, "1", wxDefaultPosition, wxSize(90, -1));
+            createControl<wxTextCtrl>(*graphPanel_, wxID_ANY, "1", wxDefaultPosition, wxSize(90, -1));
         edge->Add(edgeFirst_.get(), 1, wxRIGHT, 6);
         edge->Add(edgeSecond_.get(), 1);
         addSizer(*tools, std::move(edge), 0, wxEXPAND | wxBOTTOM, 6);
-        button(*graphPanel_, *tools, "Add edge", [this] {
+        addButton(*graphPanel_, *tools, "Add edge", [this] {
             changeEdge(false);
         });
-        button(*graphPanel_, *tools, "Remove edge", [this] {
+        addButton(*graphPanel_, *tools, "Remove edge", [this] {
             changeEdge(true);
         });
         tools->AddSpacer(10);
-        label(*graphPanel_, *tools, "Generate graph");
+        addLabel(*graphPanel_, *tools, "Generate graph");
         tools->AddSpacer(8);
-        generation_.create(*graphPanel_, *tools);
-        button(*graphPanel_, *tools, "Generate", [this] {
-            auto parameters = generation_.read();
+        generationControls_.create(*graphPanel_, *tools);
+        addButton(*graphPanel_, *tools, "Generate", [this] {
+            auto parameters = generationControls_.read();
             if (!parameters) {
                 showError(parameters.error());
                 return;
@@ -553,7 +553,7 @@ class MainFrame final : public wxFrame {
             if (!confirmReplacement()) {
                 return;
             }
-            runTask(
+            runBackgroundTask(
                 [this, parameters = *parameters] {
                     return application_.generate(parameters);
                 },
@@ -563,91 +563,91 @@ class MainFrame final : public wxFrame {
                 });
         });
         tools->AddSpacer(10);
-        label(*graphPanel_, *tools, "Coloring algorithm");
+        addLabel(*graphPanel_, *tools, "Coloring algorithm");
         tools->AddSpacer(8);
-        algorithm_ = control<wxChoice>(*graphPanel_, wxID_ANY);
+        algorithm_ = createControl<wxChoice>(*graphPanel_, wxID_ANY);
         fillChoice(*algorithm_, supportedColoringAlgorithms, ColoringAlgorithm::Sequential,
                    algorithmName);
         tools->Add(algorithm_.get(), 0, wxEXPAND | wxBOTTOM, 6);
-        button(*graphPanel_, *tools, "Color graph", [this] {
+        addButton(*graphPanel_, *tools, "Color graph", [this] {
             auto selectedAlgorithm = readChoice(*algorithm_, supportedColoringAlgorithms, "algorithm");
             if (!selectedAlgorithm) {
                 showError(selectedAlgorithm.error());
                 return;
             }
-            runTask([this, algorithm = *selectedAlgorithm] {
-                return application_.run(algorithm);
+            runBackgroundTask([this, algorithm = *selectedAlgorithm] {
+                return application_.computeColoring(algorithm);
             });
         });
-        button(*graphPanel_, *tools, "Compare both algorithms", [this] {
-            const auto repetitions = static_cast<std::size_t>(repetitions_->GetValue());
-            runTask(
-                [this, repetitions] {
-                    return application_.compare(repetitions);
+        addButton(*graphPanel_, *tools, "Compare both algorithms", [this] {
+            const auto repetitionCount = static_cast<std::size_t>(repetitionCount_->GetValue());
+            runBackgroundTask(
+                [this, repetitionCount] {
+                    return application_.compareAlgorithms(repetitionCount);
                 },
                 true);
         });
-        auto note = control<wxStaticText>(*graphPanel_,
+        auto note = createControl<wxStaticText>(*graphPanel_,
                                           wxID_ANY,
                                           "Vertex IDs and colors start at 0.\nGreedy methods do "
                                           "not guarantee\nthe minimum number of colors.");
         tools->Add(note.get(), 0, wxTOP, 8);
         addSizer(*root, std::move(tools), 0, wxEXPAND | wxALL, 12);
         auto view = std::make_unique<wxBoxSizer>(wxVERTICAL);
-        summary_ = control<wxStaticText>(*graphPanel_, wxID_ANY, "");
+        summary_ = createControl<wxStaticText>(*graphPanel_, wxID_ANY, "");
         view->Add(summary_.get(), 0, wxBOTTOM, 8);
-        canvas_ = control<GraphCanvas>(*graphPanel_, application_, busy_);
+        canvas_ = createControl<GraphCanvas>(*graphPanel_, application_, busy_);
         view->Add(canvas_.get(), 3, wxEXPAND | wxBOTTOM, 8);
-        vertices_ = control<VertexTable>(*graphPanel_, application_, busy_);
-        view->Add(vertices_.get(), 2, wxEXPAND);
+        vertexTable_ = createControl<VertexTable>(*graphPanel_, application_, busy_);
+        view->Add(vertexTable_.get(), 2, wxEXPAND);
         addSizer(*root, std::move(view), 1, wxEXPAND | wxALL, 12);
         graphPanel_->SetSizer(root.release());
         notebook.AddPage(graphPanel_.get(), "Graph");
     }
 
     void buildComparisonPage(wxNotebook& notebook) {
-        comparisonPanel_ = control<wxPanel>(notebook, wxID_ANY);
+        comparisonPanel_ = createControl<wxPanel>(notebook, wxID_ANY);
         auto root = std::make_unique<wxBoxSizer>(wxHORIZONTAL);
         auto tools = std::make_unique<wxBoxSizer>(wxVERTICAL);
-        label(*comparisonPanel_, *tools, "Comparison settings");
+        addLabel(*comparisonPanel_, *tools, "Comparison settings");
         tools->AddSpacer(8);
-        label(*comparisonPanel_, *tools, "Repetitions (median)");
-        repetitions_ = control<wxSpinCtrl>(*comparisonPanel_, wxID_ANY);
-        repetitions_->SetRange(1, static_cast<int>(InputLimits::maxRepetitions));
-        repetitions_->SetValue(static_cast<int>(BenchmarkDefaults::repetitions));
-        tools->Add(repetitions_.get(), 0, wxEXPAND | wxTOP | wxBOTTOM, 6);
-        button(*comparisonPanel_, *tools, "Compare current graph", [this] {
-            const auto repetitions = static_cast<std::size_t>(repetitions_->GetValue());
-            runTask(
-                [this, repetitions] {
-                    return application_.compare(repetitions);
+        addLabel(*comparisonPanel_, *tools, "Repetitions (median)");
+        repetitionCount_ = createControl<wxSpinCtrl>(*comparisonPanel_, wxID_ANY);
+        repetitionCount_->SetRange(1, static_cast<int>(ApplicationLimits::maxRepetitionCount));
+        repetitionCount_->SetValue(static_cast<int>(BenchmarkDefaults::repetitionCount));
+        tools->Add(repetitionCount_.get(), 0, wxEXPAND | wxTOP | wxBOTTOM, 6);
+        addButton(*comparisonPanel_, *tools, "Compare current graph", [this] {
+            const auto repetitionCount = static_cast<std::size_t>(repetitionCount_->GetValue());
+            runBackgroundTask(
+                [this, repetitionCount] {
+                    return application_.compareAlgorithms(repetitionCount);
                 },
                 true);
         });
         tools->AddSpacer(12);
-        label(*comparisonPanel_, *tools, "Series for plotting");
+        addLabel(*comparisonPanel_, *tools, "Series for plotting");
         tools->AddSpacer(8);
-        seriesGeneration_.create(*comparisonPanel_, *tools);
-        label(*comparisonPanel_, *tools, "Number of sizes");
-        points_ = control<wxSpinCtrl>(*comparisonPanel_, wxID_ANY);
-        points_->SetRange(1, static_cast<int>(InputLimits::maxSeriesPoints));
-        points_->SetValue(static_cast<int>(BenchmarkDefaults::points));
-        tools->Add(points_.get(), 0, wxEXPAND | wxTOP | wxBOTTOM, 6);
-        button(*comparisonPanel_, *tools, "Compare size series", [this] {
-            auto parameters = seriesGeneration_.read();
+        seriesGenerationControls_.create(*comparisonPanel_, *tools);
+        addLabel(*comparisonPanel_, *tools, "Number of sizes");
+        sizeCount_ = createControl<wxSpinCtrl>(*comparisonPanel_, wxID_ANY);
+        sizeCount_->SetRange(1, static_cast<int>(ApplicationLimits::maxSeriesSizeCount));
+        sizeCount_->SetValue(static_cast<int>(BenchmarkDefaults::sizeCount));
+        tools->Add(sizeCount_.get(), 0, wxEXPAND | wxTOP | wxBOTTOM, 6);
+        addButton(*comparisonPanel_, *tools, "Compare size series", [this] {
+            auto parameters = seriesGenerationControls_.read();
             if (!parameters) {
                 showError(parameters.error());
                 return;
             }
-            const auto points = static_cast<std::size_t>(points_->GetValue());
-            const auto repetitions = static_cast<std::size_t>(repetitions_->GetValue());
-            runTask(
-                [this, parameters = *parameters, points, repetitions] {
-                    return application_.compareSeries(parameters, points, repetitions);
+            const auto sizeCount = static_cast<std::size_t>(sizeCount_->GetValue());
+            const auto repetitionCount = static_cast<std::size_t>(repetitionCount_->GetValue());
+            runBackgroundTask(
+                [this, parameters = *parameters, sizeCount, repetitionCount] {
+                    return application_.compareSizeSeries(parameters, sizeCount, repetitionCount);
                 },
                 true);
         });
-        button(*comparisonPanel_, *tools, "Export CSV...", [this] {
+        addButton(*comparisonPanel_, *tools, "Export CSV...", [this] {
             wxFileDialog dialog(this,
                                 "Export comparison",
                                 "",
@@ -658,7 +658,7 @@ class MainFrame final : public wxFrame {
                 return;
             }
             const auto result =
-                exportBenchmark(application_.measurements(), utf8(dialog.GetPath()));
+                exportBenchmark(application_.measurements(), convertToUtf8(dialog.GetPath()));
             if (!result) {
                 showError(result.error());
             } else {
@@ -666,7 +666,7 @@ class MainFrame final : public wxFrame {
             }
         });
         auto note =
-            control<wxStaticText>(*comparisonPanel_,
+            createControl<wxStaticText>(*comparisonPanel_,
                                   wxID_ANY,
                                   "Both methods use the same graph.\nIncludes ordering and "
                                   "allocation;\nvalidation runs outside the timer.\n"
@@ -674,7 +674,7 @@ class MainFrame final : public wxFrame {
                                   "the current graph.\nRows remain until the next comparison.");
         tools->Add(note.get(), 0, wxTOP, 10);
         addSizer(*root, std::move(tools), 0, wxEXPAND | wxALL, 12);
-        comparisons_ = control<wxListCtrl>(
+        benchmarkTable_ = createControl<wxListCtrl>(
             *comparisonPanel_, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxLC_REPORT);
         constexpr TableColumn columns[] = {
             {ComparisonColumn::Vertices, "Vertices", 100},
@@ -683,10 +683,10 @@ class MainFrame final : public wxFrame {
             {ComparisonColumn::MedianTime, "Median (µs)", 100},
             {ComparisonColumn::Colors, "Colors", 100}};
         for (const auto& column : columns) {
-            comparisons_->InsertColumn(column.index, text(column.caption), wxLIST_FORMAT_LEFT,
+            benchmarkTable_->InsertColumn(column.index, convertToWxString(column.caption), wxLIST_FORMAT_LEFT,
                                         column.width);
         }
-        root->Add(comparisons_.get(), 1, wxEXPAND | wxALL, 12);
+        root->Add(benchmarkTable_.get(), 1, wxEXPAND | wxALL, 12);
         comparisonPanel_->SetSizer(root.release());
         comparisonPageIndex_ = notebook.GetPageCount();
         notebook.AddPage(comparisonPanel_.get(), "Algorithm comparison");
@@ -709,7 +709,7 @@ public:
         file.release(); // NOLINT(bugprone-unused-return-value,cert-err33-c)
         SetMenuBar(menuBar.release());
         CreateStatusBar();
-        notebook_ = control<wxNotebook>(*this, wxID_ANY);
+        notebook_ = createControl<wxNotebook>(*this, wxID_ANY);
         buildGraphPage(*notebook_);
         buildComparisonPage(*notebook_);
         auto sizer = std::make_unique<wxBoxSizer>(wxVERTICAL);
@@ -718,7 +718,7 @@ public:
         Bind(
             wxEVT_MENU,
             [this](wxCommandEvent&) {
-                protect([this] {
+                executeWithErrorHandling([this] {
                     if (confirmReplacement()) {
                         application_.clear();
                         currentPath_.clear();
@@ -730,7 +730,7 @@ public:
         Bind(
             wxEVT_MENU,
             [this](wxCommandEvent&) {
-                protect([this] {
+                executeWithErrorHandling([this] {
                     open();
                 });
             },
@@ -738,7 +738,7 @@ public:
         Bind(
             wxEVT_MENU,
             [this](wxCommandEvent&) {
-                protect([this] {
+                executeWithErrorHandling([this] {
                     (void)save(false);
                 });
             },
@@ -746,7 +746,7 @@ public:
         Bind(
             wxEVT_MENU,
             [this](wxCommandEvent&) {
-                protect([this] {
+                executeWithErrorHandling([this] {
                     (void)save(true);
                 });
             },
@@ -780,7 +780,7 @@ public:
                 }
                 if (answer == wxYES) {
                     bool saved = false;
-                    protect([&] {
+                    executeWithErrorHandling([&] {
                         saved = save(false);
                     });
                     if (!saved) {
@@ -796,7 +796,7 @@ public:
     }
 };
 
-class Application final : public wxApp {
+class GraphColoringApp final : public wxApp {
     bool OnInit() override {
         try {
             auto frame = std::make_unique<MainFrame>();
@@ -805,10 +805,10 @@ class Application final : public wxApp {
             frame.release(); // NOLINT(bugprone-unused-return-value,cert-err33-c)
             return true;
         } catch (const std::exception& error) {
-            wxMessageBox(text(error.what()), "DOR3 startup error", wxOK | wxICON_ERROR);
+            wxMessageBox(convertToWxString(error.what()), "DOR3 startup error", wxOK | wxICON_ERROR);
             return false;
         }
     }
 };
 
-wxIMPLEMENT_APP(Application);
+wxIMPLEMENT_APP(GraphColoringApp);

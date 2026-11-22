@@ -1,28 +1,28 @@
 #include <application.hpp>
-#include <input_limits.hpp>
+#include <application_limits.hpp>
 #include <storage.hpp>
 
 Result<VertexId> GraphApplication::addVertex(std::string label) {
     if (label.find_first_of("\r\n") != std::string::npos) {
         return failure(ErrorCode::InvalidParameters, "Vertex labels must occupy one line.");
     }
-    auto size = validateGraphSize(graph_.vertexCount() + 1, graph_.edgeCount());
-    if (!size) {
-        return std::unexpected(size.error());
+    auto sizeValidation = validateGraphLimits(graph_.vertexCount() + 1, graph_.edgeCount());
+    if (!sizeValidation) {
+        return std::unexpected(sizeValidation.error());
     }
     auto id = graph_.addVertex({std::move(label)});
-    changed();
+    handleGraphChange();
     return id;
 }
 
 Result<void> GraphApplication::addEdge(VertexId first, VertexId second) {
-    auto size = validateGraphSize(graph_.vertexCount(), graph_.edgeCount() + 1);
-    if (!size) {
-        return size;
+    auto sizeValidation = validateGraphLimits(graph_.vertexCount(), graph_.edgeCount() + 1);
+    if (!sizeValidation) {
+        return sizeValidation;
     }
     auto result = graph_.addEdge(first, second);
     if (result) {
-        changed();
+        handleGraphChange();
     }
     return result;
 }
@@ -30,7 +30,7 @@ Result<void> GraphApplication::addEdge(VertexId first, VertexId second) {
 Result<void> GraphApplication::removeEdge(VertexId first, VertexId second) {
     auto result = graph_.removeEdge(first, second);
     if (result) {
-        changed();
+        handleGraphChange();
     }
     return result;
 }
@@ -41,7 +41,7 @@ Result<void> GraphApplication::generate(const GenerationParameters& parameters) 
         return std::unexpected(result.error());
     }
     graph_ = std::move(*result);
-    changed();
+    handleGraphChange();
     return {};
 }
 
@@ -64,7 +64,7 @@ Result<void> GraphApplication::save(const std::filesystem::path& path) {
     return result;
 }
 
-Result<void> GraphApplication::run(ColoringAlgorithm algorithm) {
+Result<void> GraphApplication::computeColoring(ColoringAlgorithm algorithm) {
     auto result = colorGraph(graph_, algorithm);
     if (!result) {
         return std::unexpected(result.error());
@@ -77,8 +77,8 @@ Result<void> GraphApplication::run(ColoringAlgorithm algorithm) {
     return {};
 }
 
-Result<void> GraphApplication::compare(std::size_t repetitions) {
-    auto result = compareAlgorithms(graph_, repetitions);
+Result<void> GraphApplication::compareAlgorithms(std::size_t repetitionCount) {
+    auto result = ::compareAlgorithms(graph_, repetitionCount);
     if (!result) {
         return std::unexpected(result.error());
     }
@@ -86,10 +86,10 @@ Result<void> GraphApplication::compare(std::size_t repetitions) {
     return {};
 }
 
-Result<void> GraphApplication::compareSeries(const GenerationParameters& parameters,
-                                             std::size_t points,
-                                             std::size_t repetitions) {
-    auto result = compareSizes(parameters, points, repetitions);
+Result<void> GraphApplication::compareSizeSeries(const GenerationParameters& parameters,
+                                                std::size_t sizeCount,
+                                                std::size_t repetitionCount) {
+    auto result = ::compareSizeSeries(parameters, sizeCount, repetitionCount);
     if (!result) {
         return std::unexpected(result.error());
     }

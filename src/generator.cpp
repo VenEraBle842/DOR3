@@ -1,6 +1,6 @@
 #include <cmath>
 #include <generator.hpp>
-#include <input_limits.hpp>
+#include <application_limits.hpp>
 #include <random>
 
 std::string_view topologyName(Topology topology) {
@@ -20,12 +20,12 @@ std::string_view topologyName(Topology topology) {
 }
 
 Result<void> validateGenerationParameters(const GenerationParameters& parameters) {
-    if (parameters.vertexCount > InputLimits::maxGeneratedVertices ||
-        !std::isfinite(parameters.probability) ||
-        parameters.probability < 0 || parameters.probability > 1) {
+    if (parameters.vertexCount > ApplicationLimits::maxGeneratedVertices ||
+        !std::isfinite(parameters.edgeProbability) ||
+        parameters.edgeProbability < 0 || parameters.edgeProbability > 1) {
         return failure(ErrorCode::InvalidParameters,
                        "Generation supports 0.." +
-                           std::to_string(InputLimits::maxGeneratedVertices) +
+                           std::to_string(ApplicationLimits::maxGeneratedVertices) +
                            " vertices and probability 0..1.");
     }
     if (parameters.topology < Topology::Path || parameters.topology > Topology::Random) {
@@ -71,7 +71,7 @@ Result<Graph> generateGraph(const GenerationParameters& parameters) {
         // Прямое преобразование результата генератора исключает различия реализаций распределений
         constexpr auto randomRange = static_cast<double>(std::mt19937::max()) -
                                      static_cast<double>(std::mt19937::min()) + 1.0;
-        const auto threshold = parameters.probability * randomRange;
+        const auto threshold = parameters.edgeProbability * randomRange;
         for (std::size_t i = 0; i < parameters.vertexCount; ++i) {
             for (std::size_t j = i + 1; j < parameters.vertexCount; ++j) {
                 if (parameters.topology == Topology::Complete ||

@@ -22,7 +22,7 @@ inline std::string_view algorithmName(ColoringAlgorithm algorithm) {
 
 struct ColoringResult {
     DynamicArray<std::size_t> colors;
-    DynamicArray<VertexId> order;
+    DynamicArray<VertexId> processingOrder;
     std::size_t colorCount = 0;
 };
 template <class TGraph>
@@ -43,11 +43,11 @@ Result<ColoringResult> colorGraph(const TGraph& graph, ColoringAlgorithm algorit
     ColoringResult result;
     const auto count = graph.vertexCount();
     result.colors = DynamicArray<std::size_t>(count);
-    result.order = DynamicArray<VertexId>(count);
+    result.processingOrder = DynamicArray<VertexId>(count);
     DynamicArray<std::size_t> marks(count);
     for (std::size_t i = 0; i < count; ++i) {
         result.colors.push_back(uncolored);
-        result.order.push_back(i);
+        result.processingOrder.push_back(i);
         marks.push_back(uncolored);
     }
     if (algorithm == ColoringAlgorithm::LargestDegreeFirst) {
@@ -65,11 +65,11 @@ Result<ColoringResult> colorGraph(const TGraph& graph, ColoringAlgorithm algorit
                                                  : first.vertex < second.vertex;
         });
         for (std::size_t i = 0; i < count; ++i) {
-            result.order[i] = degrees[i].vertex;
+            result.processingOrder[i] = degrees[i].vertex;
         }
     }
     for (std::size_t step = 0; step < count; ++step) {
-        const auto vertex = result.order[step];
+        const auto vertex = result.processingOrder[step];
         const auto& neighbors = graph.neighbors(vertex)->get();
         for (std::size_t i = 0; i < neighbors.size(); ++i) {
             const auto color = result.colors[neighbors[i]];
@@ -92,24 +92,24 @@ Result<ColoringResult> colorGraph(const TGraph& graph, ColoringAlgorithm algorit
 template <ColorableGraph TGraph>
 Result<void> validateColoring(const TGraph& graph, const ColoringResult& result) {
     const auto count = graph.vertexCount();
-    if (result.colors.size() != count || result.order.size() != count ||
+    if (result.colors.size() != count || result.processingOrder.size() != count ||
         result.colorCount > count) {
         return failure(ErrorCode::InvalidColoring, "Result size differs from graph size.");
     }
-    DynamicArray<bool> visited;
-    DynamicArray<bool> used;
+    DynamicArray<bool> seenVertices;
+    DynamicArray<bool> usedColors;
     for (std::size_t i = 0; i < count; ++i) {
-        visited.push_back(false);
-        used.push_back(false);
+        seenVertices.push_back(false);
+        usedColors.push_back(false);
     }
     for (std::size_t i = 0; i < count; ++i) {
-        const auto vertex = result.order[i];
+        const auto vertex = result.processingOrder[i];
         const auto color = result.colors[i];
-        if (vertex >= count || visited[vertex] || color >= result.colorCount) {
+        if (vertex >= count || seenVertices[vertex] || color >= result.colorCount) {
             return failure(ErrorCode::InvalidColoring, "Invalid processing order or color.");
         }
-        visited[vertex] = true;
-        used[color] = true;
+        seenVertices[vertex] = true;
+        usedColors[color] = true;
         const auto& neighbors = graph.neighbors(i)->get();
         for (std::size_t j = 0; j < neighbors.size(); ++j) {
             if (color == result.colors[neighbors[j]]) {
@@ -119,7 +119,7 @@ Result<void> validateColoring(const TGraph& graph, const ColoringResult& result)
         }
     }
     for (std::size_t i = 0; i < result.colorCount; ++i) {
-        if (!used[i]) {
+        if (!usedColors[i]) {
             return failure(ErrorCode::InvalidColoring, "Unused color in color count.");
         }
     }

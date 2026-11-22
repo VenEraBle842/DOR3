@@ -8,7 +8,7 @@ class GraphApplication {
     DynamicArray<BenchmarkRow> measurements_;
     bool modified_ = false;
 
-    void changed() {
+    void handleGraphChange() {
         coloring_.reset();
         modified_ = true;
     }
@@ -32,7 +32,7 @@ public:
 
     void clear() {
         graph_ = Graph{};
-        changed();
+        handleGraphChange();
     }
 
     Result<VertexId> addVertex(std::string label);
@@ -41,9 +41,9 @@ public:
     Result<void> generate(const GenerationParameters& parameters);
     Result<void> open(const std::filesystem::path& path);
     Result<void> save(const std::filesystem::path& path);
-    Result<void> run(ColoringAlgorithm algorithm);
-    Result<void> compare(std::size_t repetitions);
-    Result<void> compareSeries(const GenerationParameters& parameters,
-                               std::size_t points,
-                               std::size_t repetitions);
+    Result<void> computeColoring(ColoringAlgorithm algorithm);
+    Result<void> compareAlgorithms(std::size_t repetitionCount);
+    Result<void> compareSizeSeries(const GenerationParameters& parameters,
+                                   std::size_t sizeCount,
+                                   std::size_t repetitionCount);
 };

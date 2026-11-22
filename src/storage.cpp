@@ -2,7 +2,7 @@
 #include <chrono>
 #include <fstream>
 #include <iomanip>
-#include <input_limits.hpp>
+#include <application_limits.hpp>
 #include <locale>
 #include <sstream>
 #include <storage.hpp>
@@ -23,7 +23,7 @@ struct TemporaryDirectory {
     }
 };
 
-static Result<std::filesystem::path> temporaryDirectory(const std::filesystem::path& target) {
+static Result<std::filesystem::path> createTemporaryDirectory(const std::filesystem::path& target) {
     const auto timestamp = std::chrono::steady_clock::now().time_since_epoch().count();
     for (int attempt = 0; attempt < maxTemporaryDirectoryAttempts; ++attempt) {
         const auto path = target.parent_path() / (".dor3-write-" + std::to_string(timestamp) + "-" +
@@ -67,9 +67,9 @@ Result<Graph> readGraph(std::istream& input) {
         !(counts >> std::ws).eof()) {
         return failure(ErrorCode::FileRead, "Expected two unsigned decimal counts.");
     }
-    auto size = validateGraphSize(vertices, edges);
-    if (!size) {
-        return failure(ErrorCode::FileRead, size.error().detail);
+    auto sizeValidation = validateGraphLimits(vertices, edges);
+    if (!sizeValidation) {
+        return failure(ErrorCode::FileRead, sizeValidation.error().detail);
     }
     Graph graph;
     for (std::size_t i = 0; i < vertices; ++i) {
@@ -111,9 +111,9 @@ Result<Graph> readGraph(std::istream& input) {
 }
 
 Result<void> writeGraph(const Graph& graph, std::ostream& output) {
-    auto size = validateGraphSize(graph.vertexCount(), graph.edgeCount());
-    if (!size) {
-        return size;
+    auto sizeValidation = validateGraphLimits(graph.vertexCount(), graph.edgeCount());
+    if (!sizeValidation) {
+        return sizeValidation;
     }
     output.imbue(std::locale::classic());
     output << graphFileHeader << '\n' << graph.vertexCount() << ' ' << graph.edgeCount() << '\n';
@@ -152,7 +152,7 @@ Result<Graph> loadGraph(const std::filesystem::path& path) {
 
 Result<void> writeFile(const std::filesystem::path& path,
                        const std::function<Result<void>(std::ostream&)>& writer) {
-    auto directory = temporaryDirectory(path);
+    auto directory = createTemporaryDirectory(path);
     if (!directory) {
         return std::unexpected(directory.error());
     }
@@ -181,9 +181,9 @@ Result<void> writeFile(const std::filesystem::path& path,
 }
 
 Result<void> saveGraph(const Graph& graph, const std::filesystem::path& path) {
-    auto size = validateGraphSize(graph.vertexCount(), graph.edgeCount());
-    if (!size) {
-        return size;
+    auto sizeValidation = validateGraphLimits(graph.vertexCount(), graph.edgeCount());
+    if (!sizeValidation) {
+        return sizeValidation;
     }
     return writeFile(path, [&](std::ostream& output) {
         return writeGraph(graph, output);

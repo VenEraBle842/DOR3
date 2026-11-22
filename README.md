@@ -41,7 +41,7 @@ CSV: `Vertices,Edges,Algorithm,MedianMicroseconds,Colors,Repetitions,Verified,To
 | --- | --- |
 | `include/graph.hpp` | `UndirectedGraph<TData>`, отдельное хранение данных и связей |
 | `include/coloring.hpp` | Concept графа, стратегии и независимая проверка |
-| `include/input_limits.hpp` | Общие пределы ввода и проверка размера графа |
+| `include/application_limits.hpp` | Общие пределы ввода и проверка размера графа |
 | `src/generator.cpp` | Генерация топологий |
 | `src/storage.cpp` | Строгий файловый формат, запись через временный файл |
 | `src/benchmark.cpp` | Сравнение алгоритмов, серия размеров и CSV |

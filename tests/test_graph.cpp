@@ -184,10 +184,10 @@ TEST(Coloring, DegreeOrderingAndTieBreakingAreDeterministic) {
     ASSERT_TRUE(degree);
     EXPECT_EQ(sequential->colorCount, 3);
     EXPECT_EQ(degree->colorCount, 2);
-    EXPECT_EQ(degree->order[0], 2);
-    EXPECT_EQ(degree->order[1], 3);
-    EXPECT_EQ(degree->order[2], 0);
-    EXPECT_EQ(degree->order[3], 1);
+    EXPECT_EQ(degree->processingOrder[0], 2);
+    EXPECT_EQ(degree->processingOrder[1], 3);
+    EXPECT_EQ(degree->processingOrder[2], 0);
+    EXPECT_EQ(degree->processingOrder[3], 1);
     EXPECT_FALSE(colorGraph(graph, static_cast<ColoringAlgorithm>(90)));
 }
 
@@ -197,7 +197,7 @@ TEST(Coloring, ValidatorRejectsCorruptedColorsOrderAndCount) {
     result->colors[1] = result->colors[0];
     EXPECT_FALSE(validateColoring(*graph, *result));
     result = colorGraph(*graph, ColoringAlgorithm::Sequential);
-    result->order[1] = result->order[0];
+    result->processingOrder[1] = result->processingOrder[0];
     EXPECT_FALSE(validateColoring(*graph, *result));
     result = colorGraph(*graph, ColoringAlgorithm::Sequential);
     result->colors[0] = std::numeric_limits<std::size_t>::max();

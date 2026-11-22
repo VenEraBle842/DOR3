@@ -1,25 +1,25 @@
 #include <benchmark.hpp>
 #include <chrono>
 #include <iomanip>
-#include <input_limits.hpp>
+#include <application_limits.hpp>
 #include <limits>
 #include <locale>
 #include <ostream>
 #include <storage.hpp>
 
-static Result<void> validateRepetitions(std::size_t repetitions) {
-    if (repetitions == 0 || repetitions > InputLimits::maxRepetitions) {
+static Result<void> validateRepetitionCount(std::size_t repetitionCount) {
+    if (repetitionCount == 0 || repetitionCount > ApplicationLimits::maxRepetitionCount) {
         return failure(ErrorCode::InvalidParameters,
                        "Repetitions must be 1.." +
-                           std::to_string(InputLimits::maxRepetitions) + ".");
+                           std::to_string(ApplicationLimits::maxRepetitionCount) + ".");
     }
     return {};
 }
 
-Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::size_t repetitions) {
-    auto validRepetitions = validateRepetitions(repetitions);
-    if (!validRepetitions) {
-        return std::unexpected(validRepetitions.error());
+Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::size_t repetitionCount) {
+    auto repetitionValidation = validateRepetitionCount(repetitionCount);
+    if (!repetitionValidation) {
+        return std::unexpected(repetitionValidation.error());
     }
     DynamicArray<BenchmarkRow> rows;
     for (auto algorithm : supportedColoringAlgorithms) {
@@ -32,7 +32,7 @@ Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::si
             return std::unexpected(valid.error());
         }
         DynamicArray<double> samples;
-        for (std::size_t iteration = 0; iteration < repetitions; ++iteration) {
+        for (std::size_t iteration = 0; iteration < repetitionCount; ++iteration) {
             const auto start = std::chrono::steady_clock::now();
             auto result = colorGraph(graph, algorithm);
             const auto stop = std::chrono::steady_clock::now();
@@ -46,15 +46,15 @@ Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::si
             samples.push_back(std::chrono::duration<double, std::micro>(stop - start).count());
         }
         heapSort(samples);
-        const auto middle = repetitions / 2;
+        const auto middle = repetitionCount / 2;
         const double median =
-            repetitions % 2 ? samples[middle] : (samples[middle - 1] + samples[middle]) / 2;
+            repetitionCount % 2 ? samples[middle] : (samples[middle - 1] + samples[middle]) / 2;
         rows.push_back({graph.vertexCount(),
                         graph.edgeCount(),
                         algorithm,
                         median,
                         warmup->colorCount,
-                        repetitions,
+                        repetitionCount,
                         "Current graph",
                         0,
                         0});
@@ -63,34 +63,37 @@ Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::si
 }
 
 Result<DynamicArray<BenchmarkRow>>
-compareSizes(const GenerationParameters& parameters, std::size_t points, std::size_t repetitions) {
-    auto validRepetitions = validateRepetitions(repetitions);
-    if (!validRepetitions) {
-        return std::unexpected(validRepetitions.error());
+compareSizeSeries(const GenerationParameters& parameters,
+                  std::size_t sizeCount,
+                  std::size_t repetitionCount) {
+    auto repetitionValidation = validateRepetitionCount(repetitionCount);
+    if (!repetitionValidation) {
+        return std::unexpected(repetitionValidation.error());
     }
     auto validParameters = validateGenerationParameters(parameters);
     if (!validParameters) {
         return std::unexpected(validParameters.error());
     }
-    if (points == 0 || points > InputLimits::maxSeriesPoints || parameters.vertexCount < points) {
+    if (sizeCount == 0 || sizeCount > ApplicationLimits::maxSeriesSizeCount ||
+        parameters.vertexCount < sizeCount) {
         return failure(ErrorCode::InvalidParameters,
-                       "Use 1.." + std::to_string(InputLimits::maxSeriesPoints) +
+                       "Use 1.." + std::to_string(ApplicationLimits::maxSeriesSizeCount) +
                            " points and a maximum size between points and " +
-                           std::to_string(InputLimits::maxGeneratedVertices) + ".");
+                           std::to_string(ApplicationLimits::maxGeneratedVertices) + ".");
     }
-    if (parameters.topology == Topology::Cycle && parameters.vertexCount / points < 3) {
+    if (parameters.topology == Topology::Cycle && parameters.vertexCount / sizeCount < 3) {
         return failure(ErrorCode::InvalidParameters,
                        "Each cycle in the series needs at least 3 vertices.");
     }
     DynamicArray<BenchmarkRow> rows;
-    for (std::size_t point = 1; point <= points; ++point) {
+    for (std::size_t point = 1; point <= sizeCount; ++point) {
         auto current = parameters;
-        current.vertexCount = parameters.vertexCount * point / points;
+        current.vertexCount = parameters.vertexCount * point / sizeCount;
         auto graph = generateGraph(current);
         if (!graph) {
             return std::unexpected(graph.error());
         }
-        auto comparison = compareAlgorithms(*graph, repetitions);
+        auto comparison = compareAlgorithms(*graph, repetitionCount);
         if (!comparison) {
             return std::unexpected(comparison.error());
         }
@@ -98,7 +101,7 @@ compareSizes(const GenerationParameters& parameters, std::size_t points, std::si
             auto row = std::move((*comparison)[i]);
             row.topology = topologyName(parameters.topology);
             row.seed = parameters.seed;
-            row.probability = parameters.probability;
+            row.edgeProbability = parameters.edgeProbability;
             rows.push_back(std::move(row));
         }
     }
@@ -115,9 +118,9 @@ Result<void> exportBenchmark(const DynamicArray<BenchmarkRow>& rows,
         // Результаты сравнения публикуются только после независимой проверки
         for (std::size_t i = 0; i < rows.size(); ++i) {
             const auto& row = rows[i];
-            output << row.vertices << ',' << row.edges << ',' << algorithmName(row.algorithm) << ','
-                   << row.medianMicroseconds << ',' << row.colors << ',' << row.repetitions << ','
-                   << "true," << row.topology << ',' << row.seed << ',' << row.probability << '\n';
+            output << row.vertexCount << ',' << row.edgeCount << ',' << algorithmName(row.algorithm) << ','
+                   << row.medianMicroseconds << ',' << row.colorCount << ',' << row.repetitionCount << ','
+                   << "true," << row.topology << ',' << row.seed << ',' << row.edgeProbability << '\n';
         }
         if (!output) {
             return failure(ErrorCode::FileWrite);

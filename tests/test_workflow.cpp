@@ -2,7 +2,7 @@
 #include <chrono>
 #include <fstream>
 #include <gtest/gtest.h>
-#include <input_limits.hpp>
+#include <application_limits.hpp>
 #include <limits>
 #include <sstream>
 #include <storage.hpp>
@@ -95,12 +95,12 @@ TEST(Storage, RejectsSignedOverflowingAndPartialNumbersInEveryField) {
 }
 
 TEST(Storage, SharedLimitsAcceptBoundariesAndRejectOversizedHeaders) {
-    EXPECT_TRUE(validateGraphSize(InputLimits::maxVertices, InputLimits::maxEdges));
-    EXPECT_FALSE(validateGraphSize(InputLimits::maxVertices + 1, 0));
-    EXPECT_FALSE(validateGraphSize(0, InputLimits::maxEdges + 1));
+    EXPECT_TRUE(validateGraphLimits(ApplicationLimits::maxVertices, ApplicationLimits::maxEdges));
+    EXPECT_FALSE(validateGraphLimits(ApplicationLimits::maxVertices + 1, 0));
+    EXPECT_FALSE(validateGraphLimits(0, ApplicationLimits::maxEdges + 1));
     const DynamicArray<std::string> counts{
-        std::to_string(InputLimits::maxVertices + 1) + " 0",
-        "0 " + std::to_string(InputLimits::maxEdges + 1)};
+        std::to_string(ApplicationLimits::maxVertices + 1) + " 0",
+        "0 " + std::to_string(ApplicationLimits::maxEdges + 1)};
     for (const auto& line : counts) {
         std::istringstream input("DOR3_GRAPH 1\n" + line + "\n");
         auto result = readGraph(input);
@@ -146,7 +146,7 @@ TEST_F(FilesTest, FailedWriteKeepsExistingTarget) {
 
 TEST_F(FilesTest, OversizedGraphCannotBeWrittenOrReplaceExistingFile) {
     Graph graph;
-    for (std::size_t i = 0; i <= InputLimits::maxVertices; ++i) {
+    for (std::size_t i = 0; i <= ApplicationLimits::maxVertices; ++i) {
         graph.addVertex({""});
     }
     std::ostringstream output;
@@ -166,45 +166,45 @@ TEST_F(FilesTest, OversizedGraphCannotBeWrittenOrReplaceExistingFile) {
 
 TEST_F(FilesTest, ApplicationVertexLimitPreservesSavedGraphAndColoring) {
     GraphApplication application;
-    for (std::size_t i = 0; i < InputLimits::maxVertices; ++i) {
+    for (std::size_t i = 0; i < ApplicationLimits::maxVertices; ++i) {
         ASSERT_TRUE(application.addVertex(""));
     }
     const auto path = folder / "boundary.graph";
     ASSERT_TRUE(application.save(path));
-    ASSERT_TRUE(application.run(ColoringAlgorithm::Sequential));
+    ASSERT_TRUE(application.computeColoring(ColoringAlgorithm::Sequential));
     auto result = application.addVertex("too many");
     ASSERT_FALSE(result);
     EXPECT_EQ(result.error().code, ErrorCode::LimitExceeded);
-    EXPECT_EQ(application.graph().vertexCount(), InputLimits::maxVertices);
+    EXPECT_EQ(application.graph().vertexCount(), ApplicationLimits::maxVertices);
     EXPECT_FALSE(application.isModified());
     EXPECT_TRUE(application.coloring());
     ASSERT_TRUE(application.open(path));
-    EXPECT_EQ(application.graph().vertexCount(), InputLimits::maxVertices);
+    EXPECT_EQ(application.graph().vertexCount(), ApplicationLimits::maxVertices);
 }
 
-TEST(Application, EdgeLimitRejectsNewEdgeWithoutInvalidatingColoring) {
+TEST(GraphApplication, EdgeLimitRejectsNewEdgeWithoutInvalidatingColoring) {
     GraphApplication application;
-    for (std::size_t i = 0; i < InputLimits::maxVertices; ++i) {
+    for (std::size_t i = 0; i < ApplicationLimits::maxVertices; ++i) {
         ASSERT_TRUE(application.addVertex(""));
     }
     // Distribute edges across the graph to keep this boundary test sparse and fast.
-    constexpr auto neighborsPerVertex = InputLimits::maxEdges / InputLimits::maxVertices + 1;
-    for (VertexId first = 0; first < InputLimits::maxVertices &&
-                             application.graph().edgeCount() < InputLimits::maxEdges; ++first) {
+    constexpr auto neighborsPerVertex = ApplicationLimits::maxEdges / ApplicationLimits::maxVertices + 1;
+    for (VertexId first = 0; first < ApplicationLimits::maxVertices &&
+                             application.graph().edgeCount() < ApplicationLimits::maxEdges; ++first) {
         for (std::size_t offset = 1; offset <= neighborsPerVertex &&
-                                     application.graph().edgeCount() < InputLimits::maxEdges;
+                                     application.graph().edgeCount() < ApplicationLimits::maxEdges;
              ++offset) {
-            ASSERT_TRUE(application.addEdge(first, (first + offset) % InputLimits::maxVertices));
+            ASSERT_TRUE(application.addEdge(first, (first + offset) % ApplicationLimits::maxVertices));
         }
     }
-    ASSERT_EQ(application.graph().edgeCount(), InputLimits::maxEdges);
-    ASSERT_TRUE(application.run(ColoringAlgorithm::Sequential));
+    ASSERT_EQ(application.graph().edgeCount(), ApplicationLimits::maxEdges);
+    ASSERT_TRUE(application.computeColoring(ColoringAlgorithm::Sequential));
     constexpr VertexId target = neighborsPerVertex + 1;
     ASSERT_FALSE(application.graph().hasEdge(0, target));
     auto result = application.addEdge(0, target);
     ASSERT_FALSE(result);
     EXPECT_EQ(result.error().code, ErrorCode::LimitExceeded);
-    EXPECT_EQ(application.graph().edgeCount(), InputLimits::maxEdges);
+    EXPECT_EQ(application.graph().edgeCount(), ApplicationLimits::maxEdges);
     EXPECT_FALSE(application.graph().hasEdge(0, target));
     EXPECT_FALSE(application.graph().hasEdge(target, 0));
     EXPECT_TRUE(application.coloring());
@@ -213,7 +213,7 @@ TEST(Application, EdgeLimitRejectsNewEdgeWithoutInvalidatingColoring) {
 TEST_F(FilesTest, ApplicationPreservesStateOnFailuresAndInvalidatesColoringOnEdits) {
     GraphApplication application;
     ASSERT_TRUE(application.generate({4, Topology::Cycle, 0, 1}));
-    ASSERT_TRUE(application.run(ColoringAlgorithm::Sequential));
+    ASSERT_TRUE(application.computeColoring(ColoringAlgorithm::Sequential));
     EXPECT_TRUE(application.isModified());
     ASSERT_TRUE(application.save(folder / "граф.data"));
     EXPECT_FALSE(application.isModified());
@@ -230,7 +230,7 @@ TEST_F(FilesTest, ApplicationPreservesStateOnFailuresAndInvalidatesColoringOnEdi
     ASSERT_TRUE(application.open(folder / "граф.data"));
     EXPECT_EQ(application.graph().vertexCount(), 4);
     EXPECT_FALSE(application.isModified());
-    ASSERT_TRUE(application.run(ColoringAlgorithm::LargestDegreeFirst));
+    ASSERT_TRUE(application.computeColoring(ColoringAlgorithm::LargestDegreeFirst));
     ASSERT_TRUE(application.removeEdge(0, 1));
     EXPECT_FALSE(application.coloring());
     EXPECT_FALSE(application.addVertex("invalid\nlabel"));
@@ -241,22 +241,22 @@ TEST_F(FilesTest, ApplicationPreservesStateOnFailuresAndInvalidatesColoringOnEdi
 TEST_F(FilesTest, ComparisonAndCsvAndFailedComparisonPreserveResults) {
     GraphApplication application;
     ASSERT_TRUE(application.generate({8, Topology::Cycle, 0, 42}));
-    ASSERT_TRUE(application.compare(3));
+    ASSERT_TRUE(application.compareAlgorithms(3));
     ASSERT_EQ(application.measurements().size(), 2);
     for (std::size_t i = 0; i < 2; ++i) {
         const auto& row = application.measurements()[i];
-        EXPECT_EQ(row.vertices, 8);
-        EXPECT_EQ(row.edges, 8);
-        EXPECT_EQ(row.colors, 2);
+        EXPECT_EQ(row.vertexCount, 8);
+        EXPECT_EQ(row.edgeCount, 8);
+        EXPECT_EQ(row.colorCount, 2);
         EXPECT_GE(row.medianMicroseconds, 0);
     }
-    EXPECT_FALSE(application.compare(0));
+    EXPECT_FALSE(application.compareAlgorithms(0));
     EXPECT_EQ(application.measurements().size(), 2);
-    ASSERT_TRUE(application.compareSeries({20, Topology::Path, 0, 42}, 4, 2));
+    ASSERT_TRUE(application.compareSizeSeries({20, Topology::Path, 0, 42}, 4, 2));
     EXPECT_EQ(application.graph().vertexCount(), 8);
     ASSERT_EQ(application.measurements().size(), 8);
-    EXPECT_EQ(application.measurements()[0].vertices, 5);
-    EXPECT_EQ(application.measurements()[7].vertices, 20);
+    EXPECT_EQ(application.measurements()[0].vertexCount, 5);
+    EXPECT_EQ(application.measurements()[7].vertexCount, 20);
     EXPECT_EQ(application.measurements()[7].seed, 42);
     ASSERT_TRUE(exportBenchmark(application.measurements(), folder / "results.csv"));
     std::ifstream input(folder / "results.csv");
@@ -271,13 +271,13 @@ TEST_F(FilesTest, ComparisonAndCsvAndFailedComparisonPreserveResults) {
         ++lines;
     }
     EXPECT_EQ(lines, 8);
-    EXPECT_FALSE(application.compareSeries({20, Topology::Cycle, 0, 1}, 20, 3));
-    EXPECT_FALSE(application.compareSeries({20, Topology::Path, 0, 1}, 0, 3));
+    EXPECT_FALSE(application.compareSizeSeries({20, Topology::Cycle, 0, 1}, 20, 3));
+    EXPECT_FALSE(application.compareSizeSeries({20, Topology::Path, 0, 1}, 0, 3));
     EXPECT_EQ(application.measurements().size(), 8);
-    EXPECT_FALSE(application.compare(InputLimits::maxRepetitions + 1));
-    EXPECT_FALSE(application.compareSeries({2000, Topology::Complete, 0, 1}, 1, 0));
-    EXPECT_FALSE(application.compareSeries({20, Topology::Path, 0, 1}, 4,
-                                           InputLimits::maxRepetitions + 1));
+    EXPECT_FALSE(application.compareAlgorithms(ApplicationLimits::maxRepetitionCount + 1));
+    EXPECT_FALSE(application.compareSizeSeries({2000, Topology::Complete, 0, 1}, 1, 0));
+    EXPECT_FALSE(application.compareSizeSeries({20, Topology::Path, 0, 1}, 4,
+                                           ApplicationLimits::maxRepetitionCount + 1));
     EXPECT_EQ(application.measurements().size(), 8);
     DynamicArray<BenchmarkRow> empty;
     EXPECT_TRUE(exportBenchmark(empty, folder / "empty.csv"));
