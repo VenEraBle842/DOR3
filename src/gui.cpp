@@ -67,9 +67,9 @@ void addSizer(wxSizer& parent,
     (void)child.release();
 }
 
-void label(wxWindow& parent, wxSizer& sizer, const wxString& value) {
+void label(wxWindow& parent, wxSizer& sizer, const wxString& value, int flags = wxRIGHT) {
     auto item = control<wxStaticText>(parent, wxID_ANY, value);
-    sizer.Add(item.get(), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+    sizer.Add(item.get(), 0, flags, 8);
 }
 
 template <class T>
@@ -92,20 +92,20 @@ struct GenerationControls {
         const GenerationParameters defaults;
         auto fields = std::make_unique<wxFlexGridSizer>(2, 6, 6);
         fields->AddGrowableCol(1);
-        label(parent, *fields, "Vertices / max. size");
+        label(parent, *fields, "Vertices / max. size", wxALIGN_CENTER_VERTICAL | wxRIGHT);
         count = control<wxSpinCtrl>(parent, wxID_ANY);
         count->SetRange(0, static_cast<int>(InputLimits::maxGeneratedVertices));
         count->SetValue(static_cast<int>(defaults.vertexCount));
         fields->Add(count.get(), 1, wxEXPAND);
-        label(parent, *fields, "Topology");
+        label(parent, *fields, "Topology", wxALIGN_CENTER_VERTICAL | wxRIGHT);
         topology = control<wxChoice>(parent, wxID_ANY);
         fillChoice(*topology, supportedTopologies, defaults.topology, topologyName);
         fields->Add(topology.get(), 1, wxEXPAND);
-        label(parent, *fields, "Edge probability");
+        label(parent, *fields, "Edge probability", wxALIGN_CENTER_VERTICAL | wxRIGHT);
         probability = control<wxTextCtrl>(
             parent, wxID_ANY, text(std::format("{}", defaults.probability)));
         fields->Add(probability.get(), 1, wxEXPAND);
-        label(parent, *fields, "Seed");
+        label(parent, *fields, "Seed", wxALIGN_CENTER_VERTICAL | wxRIGHT);
         seed = control<wxTextCtrl>(parent, wxID_ANY, text(std::to_string(defaults.seed)));
         fields->Add(seed.get(), 1, wxEXPAND);
         addSizer(sizer, std::move(fields), 0, wxEXPAND | wxBOTTOM, 8);
