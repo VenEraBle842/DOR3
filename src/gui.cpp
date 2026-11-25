@@ -3,6 +3,7 @@
 #include <cmath>
 #include <format>
 #include <functional>
+#include <iterator>
 #include <application_limits.hpp>
 #include <memory>
 #include <numbers>
@@ -22,24 +23,26 @@ std::string convertToUtf8(const wxString& value) {
     return value.ToStdString(wxConvUTF8);
 }
 
-template <class T, std::size_t Size, class Name>
-void fillChoice(wxChoice& choice, const T (&values)[Size], T selected, Name name) {
+template <class Catalog, class Id>
+void fillChoice(wxChoice& choice, const Catalog& entries, Id selected) {
     choice.Clear();
-    for (auto value : values) {
-        const auto index = choice.Append(convertToWxString(name(value)));
-        if (value == selected) {
+    for (std::size_t i = 0; i < std::size(entries); ++i) {
+        const auto& entry = entries[i];
+        const auto index = choice.Append(convertToWxString(entry.name));
+        if (entry.id == selected) {
             choice.SetSelection(static_cast<int>(index));
         }
     }
 }
 
-template <class T, std::size_t Size>
-Result<T> readChoice(const wxChoice& choice, const T (&values)[Size], std::string_view field) {
+template <class Catalog>
+auto readChoice(const wxChoice& choice, const Catalog& entries, std::string_view field)
+    -> Result<decltype(entries[0].id)> {
     const auto index = choice.GetSelection();
-    if (index < 0 || static_cast<std::size_t>(index) >= Size) {
+    if (index < 0 || static_cast<std::size_t>(index) >= std::size(entries)) {
         return failure(ErrorCode::InvalidParameters, "Select a valid " + std::string(field) + ".");
     }
-    return values[static_cast<std::size_t>(index)];
+    return entries[static_cast<std::size_t>(index)].id;
 }
 
 struct TableColumn {
@@ -99,7 +102,7 @@ struct GenerationControls {
         fields->Add(count.get(), 1, wxEXPAND);
         addLabel(parent, *fields, "Topology", wxALIGN_CENTER_VERTICAL | wxRIGHT);
         topology = createControl<wxChoice>(parent, wxID_ANY);
-        fillChoice(*topology, supportedTopologies, defaults.topology, topologyName);
+        fillChoice(*topology, topologies, defaults.topology);
         fields->Add(topology.get(), 1, wxEXPAND);
         addLabel(parent, *fields, "Edge probability", wxALIGN_CENTER_VERTICAL | wxRIGHT);
         edgeProbability = createControl<wxTextCtrl>(
@@ -109,25 +112,46 @@ struct GenerationControls {
         seed = createControl<wxTextCtrl>(parent, wxID_ANY, convertToWxString(std::to_string(defaults.seed)));
         fields->Add(seed.get(), 1, wxEXPAND);
         addSizer(sizer, std::move(fields), 0, wxEXPAND | wxBOTTOM, 8);
+        topology->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) { updateRandomFields(); });
+        updateRandomFields();
+    }
+
+    void updateRandomFields() {
+        const auto selected = readChoice(*topology, topologies, "topology");
+        bool enabled = false;
+        if (selected) {
+            const auto entry = findTopology(*selected);
+            enabled = entry && entry->get().usesRandomParameters;
+        }
+        edgeProbability->Enable(enabled);
+        seed->Enable(enabled);
     }
 
     Result<GenerationParameters> read() const {
-        auto parsedProbability = parseNumber<double>(edgeProbability->GetValue(), "probability");
-        auto parsedSeed = parseNumber<std::uint32_t>(seed->GetValue(), "seed");
-        if (!parsedProbability) {
-            return std::unexpected(parsedProbability.error());
-        }
-        if (!parsedSeed) {
-            return std::unexpected(parsedSeed.error());
-        }
-        auto selectedTopology = readChoice(*topology, supportedTopologies, "topology");
+        auto selectedTopology = readChoice(*topology, topologies, "topology");
         if (!selectedTopology) {
             return std::unexpected(selectedTopology.error());
         }
-        return GenerationParameters{static_cast<std::size_t>(count->GetValue()),
-                                    *selectedTopology,
-                                    *parsedProbability,
-                                    *parsedSeed};
+        auto entry = findTopology(*selectedTopology);
+        if (!entry) {
+            return std::unexpected(entry.error());
+        }
+        GenerationParameters parameters;
+        parameters.vertexCount = static_cast<std::size_t>(count->GetValue());
+        parameters.topology = *selectedTopology;
+        if (entry->get().usesRandomParameters) {
+            auto probability = parseNumber<double>(edgeProbability->GetValue(), "probability");
+            auto parsedSeed = parseNumber<std::uint32_t>(seed->GetValue(), "seed");
+            if (!probability) {
+                return std::unexpected(probability.error());
+            }
+            if (!parsedSeed) {
+                return std::unexpected(parsedSeed.error());
+            }
+            parameters.edgeProbability = *probability;
+            parameters.seed = *parsedSeed;
+        }
+        return parameters;
     }
 };
 
@@ -566,11 +590,10 @@ class MainFrame final : public wxFrame {
         addLabel(*graphPanel_, *tools, "Coloring algorithm");
         tools->AddSpacer(8);
         algorithm_ = createControl<wxChoice>(*graphPanel_, wxID_ANY);
-        fillChoice(*algorithm_, supportedColoringAlgorithms, ColoringAlgorithm::Sequential,
-                   algorithmName);
+        fillChoice(*algorithm_, coloringAlgorithms<Graph>, ColoringAlgorithm::Sequential);
         tools->Add(algorithm_.get(), 0, wxEXPAND | wxBOTTOM, 6);
         addButton(*graphPanel_, *tools, "Color graph", [this] {
-            auto selectedAlgorithm = readChoice(*algorithm_, supportedColoringAlgorithms, "algorithm");
+            auto selectedAlgorithm = readChoice(*algorithm_, coloringAlgorithms<Graph>, "algorithm");
             if (!selectedAlgorithm) {
                 showError(selectedAlgorithm.error());
                 return;
@@ -579,7 +602,7 @@ class MainFrame final : public wxFrame {
                 return application_.computeColoring(algorithm);
             });
         });
-        addButton(*graphPanel_, *tools, "Compare both algorithms", [this] {
+        addButton(*graphPanel_, *tools, "Compare algorithms", [this] {
             const auto repetitionCount = static_cast<std::size_t>(repetitionCount_->GetValue());
             runBackgroundTask(
                 [this, repetitionCount] {
@@ -668,7 +691,7 @@ class MainFrame final : public wxFrame {
         auto note =
             createControl<wxStaticText>(*comparisonPanel_,
                                   wxID_ANY,
-                                  "Both methods use the same graph.\nIncludes ordering and "
+                                  "All methods use the same graph.\nIncludes ordering and "
                                   "allocation;\nvalidation runs outside the timer.\n"
                                   "All displayed results are validated.\n\nSeries keeps "
                                   "the current graph.\nRows remain until the next comparison.");

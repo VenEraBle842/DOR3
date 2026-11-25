@@ -3,36 +3,103 @@
 #include <application_limits.hpp>
 #include <random>
 
-std::string_view topologyName(Topology topology) {
-    switch (topology) {
-    case Topology::Path:
-        return "Path";
-    case Topology::Cycle:
-        return "Cycle";
-    case Topology::Star:
-        return "Star";
-    case Topology::Complete:
-        return "Complete";
-    case Topology::Random:
-        return "Random";
+Result<void> buildPathEdges(Graph& graph, const GenerationParameters& parameters) {
+    for (VertexId id = 1; id < parameters.vertexCount; ++id) {
+        auto added = graph.addEdge(id - 1, id);
+        if (!added) {
+            return added;
+        }
     }
-    return "Unknown";
+    return {};
+}
+
+Result<void> buildCycleEdges(Graph& graph, const GenerationParameters& parameters) {
+    auto path = buildPathEdges(graph, parameters);
+    if (!path) {
+        return path;
+    }
+    return graph.addEdge(parameters.vertexCount - 1, 0);
+}
+
+Result<void> buildStarEdges(Graph& graph, const GenerationParameters& parameters) {
+    for (VertexId id = 1; id < parameters.vertexCount; ++id) {
+        auto added = graph.addEdge(0, id);
+        if (!added) {
+            return added;
+        }
+    }
+    return {};
+}
+
+Result<void> buildCompleteEdges(Graph& graph, const GenerationParameters& parameters) {
+    for (VertexId first = 0; first < parameters.vertexCount; ++first) {
+        for (VertexId second = first + 1; second < parameters.vertexCount; ++second) {
+            auto added = graph.addEdge(first, second);
+            if (!added) {
+                return added;
+            }
+        }
+    }
+    return {};
+}
+
+Result<void> buildRandomEdges(Graph& graph, const GenerationParameters& parameters) {
+    std::mt19937 random(parameters.seed);
+    // Прямое преобразование обеспечивает воспроизводимость в различных реализациях
+    constexpr auto randomRange = static_cast<double>(std::mt19937::max()) -
+                                 static_cast<double>(std::mt19937::min()) + 1.0;
+    const auto threshold = parameters.edgeProbability * randomRange;
+    for (VertexId first = 0; first < parameters.vertexCount; ++first) {
+        for (VertexId second = first + 1; second < parameters.vertexCount; ++second) {
+            if (static_cast<double>(random()) < threshold) {
+                auto added = graph.addEdge(first, second);
+                if (!added) {
+                    return added;
+                }
+            }
+        }
+    }
+    return {};
+}
+
+const DynamicArray<TopologyDescriptor> topologies{
+    {Topology::Path, "Path", 0, false, buildPathEdges},
+    {Topology::Cycle, "Cycle", 3, false, buildCycleEdges},
+    {Topology::Star, "Star", 0, false, buildStarEdges},
+    {Topology::Complete, "Complete", 0, false, buildCompleteEdges},
+    {Topology::Random, "Random", 0, true, buildRandomEdges}};
+
+Result<std::reference_wrapper<const TopologyDescriptor>> findTopology(Topology topology) {
+    for (std::size_t i = 0; i < topologies.size(); ++i) {
+        if (topologies[i].id == topology) {
+            return std::cref(topologies[i]);
+        }
+    }
+    return failure(ErrorCode::InvalidParameters, "Unknown topology.");
+}
+
+std::string_view topologyName(Topology topology) {
+    const auto entry = findTopology(topology);
+    return entry ? entry->get().name : "Unknown";
 }
 
 Result<void> validateGenerationParameters(const GenerationParameters& parameters) {
-    if (parameters.vertexCount > ApplicationLimits::maxGeneratedVertices ||
-        !std::isfinite(parameters.edgeProbability) ||
-        parameters.edgeProbability < 0 || parameters.edgeProbability > 1) {
+    const auto entry = findTopology(parameters.topology);
+    if (!entry) {
+        return std::unexpected(entry.error());
+    }
+    const auto& topology = entry->get();
+    if (parameters.vertexCount < topology.minimumVertexCount ||
+        parameters.vertexCount > ApplicationLimits::maxGeneratedVertices) {
         return failure(ErrorCode::InvalidParameters,
-                       "Generation supports 0.." +
-                           std::to_string(ApplicationLimits::maxGeneratedVertices) +
-                           " vertices and probability 0..1.");
+                       std::string(topology.name) + " supports " +
+                           std::to_string(topology.minimumVertexCount) + ".." +
+                           std::to_string(ApplicationLimits::maxGeneratedVertices) + " vertices.");
     }
-    if (parameters.topology < Topology::Path || parameters.topology > Topology::Random) {
-        return failure(ErrorCode::InvalidParameters, "Unknown topology.");
-    }
-    if (parameters.topology == Topology::Cycle && parameters.vertexCount < 3) {
-        return failure(ErrorCode::InvalidParameters, "A simple cycle needs at least 3 vertices.");
+    if (topology.usesRandomParameters &&
+        (!std::isfinite(parameters.edgeProbability) ||
+         parameters.edgeProbability < 0 || parameters.edgeProbability > 1)) {
+        return failure(ErrorCode::InvalidParameters, "Probability must be finite and within 0..1.");
     }
     return {};
 }
@@ -46,43 +113,13 @@ Result<Graph> generateGraph(const GenerationParameters& parameters) {
     for (std::size_t i = 0; i < parameters.vertexCount; ++i) {
         graph.addVertex({std::to_string(i)});
     }
-    if (parameters.topology == Topology::Path || parameters.topology == Topology::Cycle) {
-        for (std::size_t i = 1; i < parameters.vertexCount; ++i) {
-            auto added = graph.addEdge(i - 1, i);
-            if (!added) {
-                return std::unexpected(added.error());
-            }
-        }
-        if (parameters.topology == Topology::Cycle) {
-            auto added = graph.addEdge(parameters.vertexCount - 1, 0);
-            if (!added) {
-                return std::unexpected(added.error());
-            }
-        }
-    } else if (parameters.topology == Topology::Star) {
-        for (std::size_t i = 1; i < parameters.vertexCount; ++i) {
-            auto added = graph.addEdge(0, i);
-            if (!added) {
-                return std::unexpected(added.error());
-            }
-        }
-    } else {
-        std::mt19937 random(parameters.seed);
-        // Прямое преобразование результата генератора исключает различия реализаций распределений
-        constexpr auto randomRange = static_cast<double>(std::mt19937::max()) -
-                                     static_cast<double>(std::mt19937::min()) + 1.0;
-        const auto threshold = parameters.edgeProbability * randomRange;
-        for (std::size_t i = 0; i < parameters.vertexCount; ++i) {
-            for (std::size_t j = i + 1; j < parameters.vertexCount; ++j) {
-                if (parameters.topology == Topology::Complete ||
-                    static_cast<double>(random()) < threshold) {
-                    auto added = graph.addEdge(i, j);
-                    if (!added) {
-                        return std::unexpected(added.error());
-                    }
-                }
-            }
-        }
+    auto entry = findTopology(parameters.topology);
+    if (!entry) {
+        return std::unexpected(entry.error());
+    }
+    auto built = entry->get().buildEdges(graph, parameters);
+    if (!built) {
+        return std::unexpected(built.error());
     }
     return graph;
 }

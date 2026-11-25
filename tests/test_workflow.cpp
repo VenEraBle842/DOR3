@@ -239,11 +239,14 @@ TEST_F(FilesTest, ApplicationPreservesStateOnFailuresAndInvalidatesColoringOnEdi
 }
 
 TEST_F(FilesTest, ComparisonAndCsvAndFailedComparisonPreserveResults) {
+    const auto algorithmCount = std::size(coloringAlgorithms<Graph>);
+    constexpr std::size_t sizeCount = 4;
+    const auto rowCount = algorithmCount * sizeCount;
     GraphApplication application;
     ASSERT_TRUE(application.generate({8, Topology::Cycle, 0, 42}));
     ASSERT_TRUE(application.compareAlgorithms(3));
-    ASSERT_EQ(application.measurements().size(), 2);
-    for (std::size_t i = 0; i < 2; ++i) {
+    ASSERT_EQ(application.measurements().size(), algorithmCount);
+    for (std::size_t i = 0; i < algorithmCount; ++i) {
         const auto& row = application.measurements()[i];
         EXPECT_EQ(row.vertexCount, 8);
         EXPECT_EQ(row.edgeCount, 8);
@@ -251,13 +254,13 @@ TEST_F(FilesTest, ComparisonAndCsvAndFailedComparisonPreserveResults) {
         EXPECT_GE(row.medianMicroseconds, 0);
     }
     EXPECT_FALSE(application.compareAlgorithms(0));
-    EXPECT_EQ(application.measurements().size(), 2);
-    ASSERT_TRUE(application.compareSizeSeries({20, Topology::Path, 0, 42}, 4, 2));
+    EXPECT_EQ(application.measurements().size(), algorithmCount);
+    ASSERT_TRUE(application.compareSizeSeries({20, Topology::Path, 0, 42}, sizeCount, 2));
     EXPECT_EQ(application.graph().vertexCount(), 8);
-    ASSERT_EQ(application.measurements().size(), 8);
+    ASSERT_EQ(application.measurements().size(), rowCount);
     EXPECT_EQ(application.measurements()[0].vertexCount, 5);
-    EXPECT_EQ(application.measurements()[7].vertexCount, 20);
-    EXPECT_EQ(application.measurements()[7].seed, 42);
+    EXPECT_EQ(application.measurements()[rowCount - 1].vertexCount, 20);
+    EXPECT_EQ(application.measurements()[rowCount - 1].seed, 42);
     ASSERT_TRUE(exportBenchmark(application.measurements(), folder / "results.csv"));
     std::ifstream input(folder / "results.csv");
     std::string line;
@@ -270,15 +273,15 @@ TEST_F(FilesTest, ComparisonAndCsvAndFailedComparisonPreserveResults) {
         EXPECT_NE(line.find(",true,"), std::string::npos);
         ++lines;
     }
-    EXPECT_EQ(lines, 8);
+    EXPECT_EQ(lines, rowCount);
     EXPECT_FALSE(application.compareSizeSeries({20, Topology::Cycle, 0, 1}, 20, 3));
     EXPECT_FALSE(application.compareSizeSeries({20, Topology::Path, 0, 1}, 0, 3));
-    EXPECT_EQ(application.measurements().size(), 8);
+    EXPECT_EQ(application.measurements().size(), rowCount);
     EXPECT_FALSE(application.compareAlgorithms(ApplicationLimits::maxRepetitionCount + 1));
     EXPECT_FALSE(application.compareSizeSeries({2000, Topology::Complete, 0, 1}, 1, 0));
     EXPECT_FALSE(application.compareSizeSeries({20, Topology::Path, 0, 1}, 4,
                                            ApplicationLimits::maxRepetitionCount + 1));
-    EXPECT_EQ(application.measurements().size(), 8);
+    EXPECT_EQ(application.measurements().size(), rowCount);
     DynamicArray<BenchmarkRow> empty;
     EXPECT_TRUE(exportBenchmark(empty, folder / "empty.csv"));
 }

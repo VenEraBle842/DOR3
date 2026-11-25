@@ -143,7 +143,8 @@ TEST(Graph, RemovingMiddleNeighborPreservesOtherEdgesAndSymmetry) {
 }
 
 TEST(Coloring, KnownTopologiesAndEmptyGraph) {
-    for (auto algorithm : {ColoringAlgorithm::Sequential, ColoringAlgorithm::LargestDegreeFirst}) {
+    for (const auto& entry : coloringAlgorithms<Graph>) {
+        const auto algorithm = entry.id;
         Graph empty;
         auto result = colorGraph(empty, algorithm);
         ASSERT_TRUE(result);
@@ -224,8 +225,8 @@ TEST(Coloring, AllFiveVertexGraphsSatisfyEdgesAndDegreeBound) {
                 }
             }
         }
-        for (auto algorithm :
-             {ColoringAlgorithm::Sequential, ColoringAlgorithm::LargestDegreeFirst}) {
+        for (const auto& entry : coloringAlgorithms<Graph>) {
+            const auto algorithm = entry.id;
             auto result = colorGraph(graph, algorithm);
             ASSERT_TRUE(result);
             std::size_t maximumDegree = 0;
@@ -260,4 +261,55 @@ TEST(Generator, ReproducibilityLimitsAndProbabilityExtremes) {
     EXPECT_FALSE(
         generateGraph({2, Topology::Random, std::numeric_limits<double>::quiet_NaN(), 100}));
     EXPECT_FALSE(generateGraph({2, static_cast<Topology>(99), 0, 100}));
+}
+
+TEST(Coloring, GreedyPassUsesProvidedOrderAndRejectsInvalidPermutations) {
+    Graph graph;
+    for (int i = 0; i < 4; ++i) graph.addVertex({""});
+    ASSERT_TRUE(graph.addEdge(0, 2));
+    ASSERT_TRUE(graph.addEdge(2, 3));
+    ASSERT_TRUE(graph.addEdge(3, 1));
+    auto result = greedyColorGraph(graph, DynamicArray<VertexId>{2, 3, 0, 1});
+    ASSERT_TRUE(result);
+    EXPECT_EQ(result->colorCount, 2);
+    EXPECT_EQ(result->processingOrder[0], 2);
+    EXPECT_TRUE(validateColoring(graph, *result));
+    EXPECT_FALSE(greedyColorGraph(graph, DynamicArray<VertexId>{0, 1, 2}));
+    EXPECT_FALSE(greedyColorGraph(graph, DynamicArray<VertexId>{0, 1, 2, 2}));
+    EXPECT_FALSE(greedyColorGraph(graph, DynamicArray<VertexId>{0, 1, 2, 4}));
+}
+
+TEST(Catalogs, EntriesHaveUniqueIdsNamesAndCallableImplementations) {
+    for (std::size_t i = 0; i < std::size(coloringAlgorithms<Graph>); ++i) {
+        const auto& entry = coloringAlgorithms<Graph>[i];
+        EXPECT_FALSE(entry.name.empty());
+        ASSERT_TRUE(entry.run);
+        EXPECT_EQ(algorithmName(entry.id), entry.name);
+        for (std::size_t j = 0; j < i; ++j) {
+            EXPECT_NE(entry.id, coloringAlgorithms<Graph>[j].id);
+            EXPECT_NE(entry.name, coloringAlgorithms<Graph>[j].name);
+        }
+    }
+    for (std::size_t i = 0; i < topologies.size(); ++i) {
+        const auto& entry = topologies[i];
+        EXPECT_FALSE(entry.name.empty());
+        ASSERT_TRUE(entry.buildEdges);
+        EXPECT_EQ(topologyName(entry.id), entry.name);
+        for (std::size_t j = 0; j < i; ++j) {
+            EXPECT_NE(entry.id, topologies[j].id);
+            EXPECT_NE(entry.name, topologies[j].name);
+        }
+        auto graph = generateGraph({entry.minimumVertexCount, entry.id, 0.5, 42});
+        ASSERT_TRUE(graph);
+        EXPECT_EQ(graph->vertexCount(), entry.minimumVertexCount);
+        auto result = colorGraph(*graph, ColoringAlgorithm::Sequential);
+        ASSERT_TRUE(result);
+        EXPECT_TRUE(validateColoring(*graph, *result));
+        if (entry.minimumVertexCount > 0) {
+            EXPECT_FALSE(generateGraph({entry.minimumVertexCount - 1, entry.id, 0.5, 42}));
+        }
+        auto invalidProbability = generateGraph(
+            {5, entry.id, std::numeric_limits<double>::quiet_NaN(), 42});
+        EXPECT_EQ(invalidProbability.has_value(), !entry.usesRandomParameters);
+    }
 }

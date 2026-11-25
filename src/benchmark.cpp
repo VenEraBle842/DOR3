@@ -22,8 +22,8 @@ Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::si
         return std::unexpected(repetitionValidation.error());
     }
     DynamicArray<BenchmarkRow> rows;
-    for (auto algorithm : supportedColoringAlgorithms) {
-        auto warmup = colorGraph(graph, algorithm);
+    for (const auto& algorithm : coloringAlgorithms<Graph>) {
+        auto warmup = algorithm.run(graph);
         if (!warmup) {
             return std::unexpected(warmup.error());
         }
@@ -34,7 +34,7 @@ Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::si
         DynamicArray<double> samples;
         for (std::size_t iteration = 0; iteration < repetitionCount; ++iteration) {
             const auto start = std::chrono::steady_clock::now();
-            auto result = colorGraph(graph, algorithm);
+            auto result = algorithm.run(graph);
             const auto stop = std::chrono::steady_clock::now();
             if (!result) {
                 return std::unexpected(result.error());
@@ -51,7 +51,7 @@ Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::si
             repetitionCount % 2 ? samples[middle] : (samples[middle - 1] + samples[middle]) / 2;
         rows.push_back({graph.vertexCount(),
                         graph.edgeCount(),
-                        algorithm,
+                        algorithm.id,
                         median,
                         warmup->colorCount,
                         repetitionCount,
@@ -81,9 +81,11 @@ compareSizeSeries(const GenerationParameters& parameters,
                            " points and a maximum size between points and " +
                            std::to_string(ApplicationLimits::maxGeneratedVertices) + ".");
     }
-    if (parameters.topology == Topology::Cycle && parameters.vertexCount / sizeCount < 3) {
-        return failure(ErrorCode::InvalidParameters,
-                       "Each cycle in the series needs at least 3 vertices.");
+    auto firstParameters = parameters;
+    firstParameters.vertexCount = parameters.vertexCount / sizeCount;
+    auto firstValidation = validateGenerationParameters(firstParameters);
+    if (!firstValidation) {
+        return std::unexpected(firstValidation.error());
     }
     DynamicArray<BenchmarkRow> rows;
     for (std::size_t point = 1; point <= sizeCount; ++point) {
