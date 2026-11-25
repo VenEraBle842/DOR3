@@ -6,7 +6,12 @@
 #include <functional>
 #include <string_view>
 
-enum class ColoringAlgorithm { Sequential, LargestDegreeFirst };
+enum class ColoringAlgorithm {
+#define DOR3_COLORING(id, displayName, implementation) id,
+#include "coloring_catalog.def"
+#undef DOR3_COLORING
+    Count
+};
 
 struct ColoringResult {
     DynamicArray<std::size_t> colors;
@@ -23,24 +28,24 @@ concept ColorableGraph = requires(const TGraph& graph, VertexId id) {
 };
 
 template <ColorableGraph TGraph>
-Result<ColoringResult> greedyColorGraph(const TGraph& graph, DynamicArray<VertexId> order) {
+Result<ColoringResult> colorGraphGreedily(const TGraph& graph, DynamicArray<VertexId> processingOrder) {
     const auto count = graph.vertexCount();
-    if (order.size() != count) {
+    if (processingOrder.size() != count) {
         return failure(ErrorCode::InvalidParameters, "Order must contain every vertex once.");
     }
-    DynamicArray<bool> seen(count);
+    DynamicArray<bool> seenVertices(count);
     for (std::size_t i = 0; i < count; ++i) {
-        seen.push_back(false);
+        seenVertices.push_back(false);
     }
     for (std::size_t i = 0; i < count; ++i) {
-        if (order[i] >= count || seen[order[i]]) {
+        if (processingOrder[i] >= count || seenVertices[processingOrder[i]]) {
             return failure(ErrorCode::InvalidParameters, "Order must contain every vertex once.");
         }
-        seen[order[i]] = true;
+        seenVertices[processingOrder[i]] = true;
     }
     constexpr auto uncolored = std::numeric_limits<std::size_t>::max();
     ColoringResult result;
-    result.processingOrder = std::move(order);
+    result.processingOrder = std::move(processingOrder);
     result.colors = DynamicArray<std::size_t>(count);
     DynamicArray<std::size_t> marks(count);
     for (std::size_t i = 0; i < count; ++i) {
@@ -69,16 +74,16 @@ Result<ColoringResult> greedyColorGraph(const TGraph& graph, DynamicArray<Vertex
 }
 
 template <ColorableGraph TGraph>
-Result<ColoringResult> colorSequential(const TGraph& graph) {
-    DynamicArray<VertexId> order(graph.vertexCount());
+Result<ColoringResult> colorGraphSequentially(const TGraph& graph) {
+    DynamicArray<VertexId> processingOrder(graph.vertexCount());
     for (VertexId id = 0; id < graph.vertexCount(); ++id) {
-        order.push_back(id);
+        processingOrder.push_back(id);
     }
-    return greedyColorGraph(graph, std::move(order));
+    return colorGraphGreedily(graph, std::move(processingOrder));
 }
 
 template <ColorableGraph TGraph>
-Result<ColoringResult> colorLargestDegreeFirst(const TGraph& graph) {
+Result<ColoringResult> colorGraphByDescendingDegree(const TGraph& graph) {
     struct VertexDegree {
         VertexId vertex;
         std::size_t degree;
@@ -91,40 +96,43 @@ Result<ColoringResult> colorLargestDegreeFirst(const TGraph& graph) {
         return first.degree != second.degree ? first.degree > second.degree
                                              : first.vertex < second.vertex;
     });
-    DynamicArray<VertexId> order(graph.vertexCount());
+    DynamicArray<VertexId> processingOrder(graph.vertexCount());
     for (std::size_t i = 0; i < degrees.size(); ++i) {
-        order.push_back(degrees[i].vertex);
+        processingOrder.push_back(degrees[i].vertex);
     }
-    return greedyColorGraph(graph, std::move(order));
+    return colorGraphGreedily(graph, std::move(processingOrder));
 }
 
 template <ColorableGraph TGraph>
 struct ColoringAlgorithmDescriptor {
     ColoringAlgorithm id;
-    std::string_view name;
-    std::function<Result<ColoringResult>(const TGraph&)> run;
+    std::string_view displayName;
+    std::function<Result<ColoringResult>(const TGraph&)> colorGraph;
 };
 
 // Каждая запись связывает идентификатор, отображаемое имя и полную реализацию алгоритма
 template <ColorableGraph TGraph>
-inline const ColoringAlgorithmDescriptor<TGraph> coloringAlgorithms[] = {
-    {ColoringAlgorithm::Sequential, "Sequential greedy", colorSequential<TGraph>},
-    {ColoringAlgorithm::LargestDegreeFirst, "Largest degree first", colorLargestDegreeFirst<TGraph>}};
+inline const ColoringAlgorithmDescriptor<TGraph> coloringAlgorithmCatalog[] = {
+#define DOR3_COLORING(id, displayName, implementation) \
+    {ColoringAlgorithm::id, displayName, implementation<TGraph>},
+#include "coloring_catalog.def"
+#undef DOR3_COLORING
+};
 
 template <ColorableGraph TGraph>
 Result<ColoringResult> colorGraph(const TGraph& graph, ColoringAlgorithm algorithm) {
-    for (const auto& entry : coloringAlgorithms<TGraph>) {
+    for (const auto& entry : coloringAlgorithmCatalog<TGraph>) {
         if (entry.id == algorithm) {
-            return entry.run(graph);
+            return entry.colorGraph(graph);
         }
     }
     return failure(ErrorCode::InvalidParameters, "Unknown coloring algorithm.");
 }
 
 inline std::string_view algorithmName(ColoringAlgorithm algorithm) {
-    for (const auto& entry : coloringAlgorithms<Graph>) {
+    for (const auto& entry : coloringAlgorithmCatalog<Graph>) {
         if (entry.id == algorithm) {
-            return entry.name;
+            return entry.displayName;
         }
     }
     return "Unknown";

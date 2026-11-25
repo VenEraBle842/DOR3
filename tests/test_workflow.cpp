@@ -239,7 +239,7 @@ TEST_F(FilesTest, ApplicationPreservesStateOnFailuresAndInvalidatesColoringOnEdi
 }
 
 TEST_F(FilesTest, ComparisonAndCsvAndFailedComparisonPreserveResults) {
-    const auto algorithmCount = std::size(coloringAlgorithms<Graph>);
+    const auto algorithmCount = std::size(coloringAlgorithmCatalog<Graph>);
     constexpr std::size_t sizeCount = 4;
     const auto rowCount = algorithmCount * sizeCount;
     GraphApplication application;

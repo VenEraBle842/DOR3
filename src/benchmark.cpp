@@ -22,8 +22,8 @@ Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::si
         return std::unexpected(repetitionValidation.error());
     }
     DynamicArray<BenchmarkRow> rows;
-    for (const auto& algorithm : coloringAlgorithms<Graph>) {
-        auto warmup = algorithm.run(graph);
+    for (const auto& algorithm : coloringAlgorithmCatalog<Graph>) {
+        auto warmup = algorithm.colorGraph(graph);
         if (!warmup) {
             return std::unexpected(warmup.error());
         }
@@ -34,7 +34,7 @@ Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::si
         DynamicArray<double> samples;
         for (std::size_t iteration = 0; iteration < repetitionCount; ++iteration) {
             const auto start = std::chrono::steady_clock::now();
-            auto result = algorithm.run(graph);
+            auto result = algorithm.colorGraph(graph);
             const auto stop = std::chrono::steady_clock::now();
             if (!result) {
                 return std::unexpected(result.error());

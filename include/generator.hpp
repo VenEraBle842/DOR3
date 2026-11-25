@@ -3,7 +3,12 @@
 #include <cstdint>
 #include <string_view>
 
-enum class Topology { Path, Cycle, Star, Complete, Random };
+enum class Topology {
+#define DOR3_TOPOLOGY(id, displayName, minimumVertexCount, usesRandomParameters, implementation) id,
+#include "topology_catalog.def"
+#undef DOR3_TOPOLOGY
+    Count
+};
 
 struct GenerationParameters {
     std::size_t vertexCount = 20;
@@ -14,15 +19,15 @@ struct GenerationParameters {
 
 struct TopologyDescriptor {
     Topology id;
-    std::string_view name;
+    std::string_view displayName;
     std::size_t minimumVertexCount;
     bool usesRandomParameters;
     std::function<Result<void>(Graph&, const GenerationParameters&)> buildEdges;
 };
 
 // Каталог является общим для процессов генерации, проверки и графического интерфейса
-extern const DynamicArray<TopologyDescriptor> topologies;
-Result<std::reference_wrapper<const TopologyDescriptor>> findTopology(Topology topology);
+extern const TopologyDescriptor topologyCatalog[static_cast<std::size_t>(Topology::Count)];
+Result<std::reference_wrapper<const TopologyDescriptor>> findTopologyDescriptor(Topology topology);
 
 Result<Graph> generateGraph(const GenerationParameters& parameters);
 Result<void> validateGenerationParameters(const GenerationParameters& parameters);

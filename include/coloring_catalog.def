@@ -1,0 +1,3 @@
+// Identifier, display name, algorithm function template
+DOR3_COLORING(Sequential, "Sequential greedy", colorGraphSequentially)
+DOR3_COLORING(LargestDegreeFirst, "Largest degree first", colorGraphByDescendingDegree)

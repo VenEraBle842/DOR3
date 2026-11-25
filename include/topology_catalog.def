@@ -1,0 +1,6 @@
+// Identifier, display name, minimum vertices, random parameters, edge builder
+DOR3_TOPOLOGY(Path, "Path", 0, false, buildPathEdges)
+DOR3_TOPOLOGY(Cycle, "Cycle", 3, false, buildCycleEdges)
+DOR3_TOPOLOGY(Star, "Star", 0, false, buildStarEdges)
+DOR3_TOPOLOGY(Complete, "Complete", 0, false, buildCompleteEdges)
+DOR3_TOPOLOGY(Random, "Random", 0, true, buildRandomEdges)

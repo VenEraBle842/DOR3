@@ -2,6 +2,7 @@
 #include <generator.hpp>
 #include <application_limits.hpp>
 #include <random>
+#include <iterator>
 
 Result<void> buildPathEdges(Graph& graph, const GenerationParameters& parameters) {
     for (VertexId id = 1; id < parameters.vertexCount; ++id) {
@@ -62,29 +63,29 @@ Result<void> buildRandomEdges(Graph& graph, const GenerationParameters& paramete
     return {};
 }
 
-const DynamicArray<TopologyDescriptor> topologies{
-    {Topology::Path, "Path", 0, false, buildPathEdges},
-    {Topology::Cycle, "Cycle", 3, false, buildCycleEdges},
-    {Topology::Star, "Star", 0, false, buildStarEdges},
-    {Topology::Complete, "Complete", 0, false, buildCompleteEdges},
-    {Topology::Random, "Random", 0, true, buildRandomEdges}};
+const TopologyDescriptor topologyCatalog[] = {
+#define DOR3_TOPOLOGY(id, displayName, minimumVertexCount, usesRandomParameters, implementation) \
+    {Topology::id, displayName, minimumVertexCount, usesRandomParameters, implementation},
+#include "topology_catalog.def"
+#undef DOR3_TOPOLOGY
+};
 
-Result<std::reference_wrapper<const TopologyDescriptor>> findTopology(Topology topology) {
-    for (std::size_t i = 0; i < topologies.size(); ++i) {
-        if (topologies[i].id == topology) {
-            return std::cref(topologies[i]);
+Result<std::reference_wrapper<const TopologyDescriptor>> findTopologyDescriptor(Topology topology) {
+    for (std::size_t i = 0; i < std::size(topologyCatalog); ++i) {
+        if (topologyCatalog[i].id == topology) {
+            return std::cref(topologyCatalog[i]);
         }
     }
     return failure(ErrorCode::InvalidParameters, "Unknown topology.");
 }
 
 std::string_view topologyName(Topology topology) {
-    const auto entry = findTopology(topology);
-    return entry ? entry->get().name : "Unknown";
+    const auto entry = findTopologyDescriptor(topology);
+    return entry ? entry->get().displayName : "Unknown";
 }
 
 Result<void> validateGenerationParameters(const GenerationParameters& parameters) {
-    const auto entry = findTopology(parameters.topology);
+    const auto entry = findTopologyDescriptor(parameters.topology);
     if (!entry) {
         return std::unexpected(entry.error());
     }
@@ -92,7 +93,7 @@ Result<void> validateGenerationParameters(const GenerationParameters& parameters
     if (parameters.vertexCount < topology.minimumVertexCount ||
         parameters.vertexCount > ApplicationLimits::maxGeneratedVertices) {
         return failure(ErrorCode::InvalidParameters,
-                       std::string(topology.name) + " supports " +
+                       std::string(topology.displayName) + " supports " +
                            std::to_string(topology.minimumVertexCount) + ".." +
                            std::to_string(ApplicationLimits::maxGeneratedVertices) + " vertices.");
     }
@@ -113,7 +114,7 @@ Result<Graph> generateGraph(const GenerationParameters& parameters) {
     for (std::size_t i = 0; i < parameters.vertexCount; ++i) {
         graph.addVertex({std::to_string(i)});
     }
-    auto entry = findTopology(parameters.topology);
+    auto entry = findTopologyDescriptor(parameters.topology);
     if (!entry) {
         return std::unexpected(entry.error());
     }

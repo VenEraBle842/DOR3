@@ -28,7 +28,7 @@ void fillChoice(wxChoice& choice, const Catalog& entries, Id selected) {
     choice.Clear();
     for (std::size_t i = 0; i < std::size(entries); ++i) {
         const auto& entry = entries[i];
-        const auto index = choice.Append(convertToWxString(entry.name));
+        const auto index = choice.Append(convertToWxString(entry.displayName));
         if (entry.id == selected) {
             choice.SetSelection(static_cast<int>(index));
         }
@@ -102,7 +102,7 @@ struct GenerationControls {
         fields->Add(count.get(), 1, wxEXPAND);
         addLabel(parent, *fields, "Topology", wxALIGN_CENTER_VERTICAL | wxRIGHT);
         topology = createControl<wxChoice>(parent, wxID_ANY);
-        fillChoice(*topology, topologies, defaults.topology);
+        fillChoice(*topology, topologyCatalog, defaults.topology);
         fields->Add(topology.get(), 1, wxEXPAND);
         addLabel(parent, *fields, "Edge probability", wxALIGN_CENTER_VERTICAL | wxRIGHT);
         edgeProbability = createControl<wxTextCtrl>(
@@ -112,15 +112,15 @@ struct GenerationControls {
         seed = createControl<wxTextCtrl>(parent, wxID_ANY, convertToWxString(std::to_string(defaults.seed)));
         fields->Add(seed.get(), 1, wxEXPAND);
         addSizer(sizer, std::move(fields), 0, wxEXPAND | wxBOTTOM, 8);
-        topology->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) { updateRandomFields(); });
-        updateRandomFields();
+        topology->Bind(wxEVT_CHOICE, [this](wxCommandEvent&) { updateRandomControls(); });
+        updateRandomControls();
     }
 
-    void updateRandomFields() {
-        const auto selected = readChoice(*topology, topologies, "topology");
+    void updateRandomControls() {
+        const auto selected = readChoice(*topology, topologyCatalog, "topology");
         bool enabled = false;
         if (selected) {
-            const auto entry = findTopology(*selected);
+            const auto entry = findTopologyDescriptor(*selected);
             enabled = entry && entry->get().usesRandomParameters;
         }
         edgeProbability->Enable(enabled);
@@ -128,11 +128,11 @@ struct GenerationControls {
     }
 
     Result<GenerationParameters> read() const {
-        auto selectedTopology = readChoice(*topology, topologies, "topology");
+        auto selectedTopology = readChoice(*topology, topologyCatalog, "topology");
         if (!selectedTopology) {
             return std::unexpected(selectedTopology.error());
         }
-        auto entry = findTopology(*selectedTopology);
+        auto entry = findTopologyDescriptor(*selectedTopology);
         if (!entry) {
             return std::unexpected(entry.error());
         }
@@ -140,15 +140,15 @@ struct GenerationControls {
         parameters.vertexCount = static_cast<std::size_t>(count->GetValue());
         parameters.topology = *selectedTopology;
         if (entry->get().usesRandomParameters) {
-            auto probability = parseNumber<double>(edgeProbability->GetValue(), "probability");
+            auto parsedEdgeProbability = parseNumber<double>(edgeProbability->GetValue(), "probability");
             auto parsedSeed = parseNumber<std::uint32_t>(seed->GetValue(), "seed");
-            if (!probability) {
-                return std::unexpected(probability.error());
+            if (!parsedEdgeProbability) {
+                return std::unexpected(parsedEdgeProbability.error());
             }
             if (!parsedSeed) {
                 return std::unexpected(parsedSeed.error());
             }
-            parameters.edgeProbability = *probability;
+            parameters.edgeProbability = *parsedEdgeProbability;
             parameters.seed = *parsedSeed;
         }
         return parameters;
@@ -590,10 +590,10 @@ class MainFrame final : public wxFrame {
         addLabel(*graphPanel_, *tools, "Coloring algorithm");
         tools->AddSpacer(8);
         algorithm_ = createControl<wxChoice>(*graphPanel_, wxID_ANY);
-        fillChoice(*algorithm_, coloringAlgorithms<Graph>, ColoringAlgorithm::Sequential);
+        fillChoice(*algorithm_, coloringAlgorithmCatalog<Graph>, ColoringAlgorithm::Sequential);
         tools->Add(algorithm_.get(), 0, wxEXPAND | wxBOTTOM, 6);
         addButton(*graphPanel_, *tools, "Color graph", [this] {
-            auto selectedAlgorithm = readChoice(*algorithm_, coloringAlgorithms<Graph>, "algorithm");
+            auto selectedAlgorithm = readChoice(*algorithm_, coloringAlgorithmCatalog<Graph>, "algorithm");
             if (!selectedAlgorithm) {
                 showError(selectedAlgorithm.error());
                 return;
