@@ -5,7 +5,7 @@
 class GraphApplication {
     Graph graph_;
     std::optional<ColoringResult> coloring_;
-    DynamicArray<BenchmarkRow> measurements_;
+    ArraySequence<BenchmarkRow> measurements_;
     bool modified_ = false;
 
     void handleGraphChange() {
@@ -22,7 +22,7 @@ public:
         return coloring_;
     }
 
-    const DynamicArray<BenchmarkRow>& measurements() const noexcept {
+    const ArraySequence<BenchmarkRow>& measurements() const noexcept {
         return measurements_;
     }
 

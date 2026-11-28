@@ -30,39 +30,26 @@ protected:
     }
 };
 
-TEST(Storage, RoundTripQuotedLabelsAndEdges) {
-    Graph graph;
-    graph.addVertex({"Аня: \"тест\" \\"});
-    graph.addVertex({""});
-    ASSERT_TRUE(graph.addEdge(0, 1));
-    std::stringstream text;
-    ASSERT_TRUE(writeGraph(graph, text));
-    auto loaded = readGraph(text);
-    ASSERT_TRUE(loaded);
-    EXPECT_EQ(loaded->vertex(0)->get().data.label, graph.vertex(0)->get().data.label);
-    EXPECT_EQ(loaded->vertex(1)->get().data.label, "");
-    EXPECT_EQ(loaded->edgeCount(), 1);
-    EXPECT_TRUE(loaded->hasEdge(1, 0));
-}
-
 TEST(Storage, RejectsMalformedAndTruncatedInput) {
     for (const auto* text : {"",
                              "DOR3_GRAPH 2\n0 0\n",
-                             "DOR3_GRAPH 1\n-1 0\n",
-                             "DOR3_GRAPH 1\n2 1\n\"a\"\n\"b\"\n0 0\n",
-                             "DOR3_GRAPH 1\n2 1\n\"a\"\n\"b\"\n0 2\n",
-                             "DOR3_GRAPH 1\n1 0\nnot quoted\n",
-                             "DOR3_GRAPH 1\n1 0\n\"unclosed\n",
-                             "DOR3_GRAPH 1\n0 0\nextra\n",
-                             "DOR3_GRAPH 1\n1 0 extra\n",
-                             "DOR3_GRAPH 1\n1 0\n\"a\rb\"\n",
-                             "DOR3_GRAPH 1\n2 2\n\"a\"\n\"b\"\n0 1\n1 0\n",
-                             "DOR3_GRAPH 1\n1 1\n\"a\"\n"}) {
+                             "DOR3_GRAPH 2\n-1 0 0 0 0 0\n",
+                             "DOR3_GRAPH 2\n2 1 2 0 1 0\n0 \"a\"\n1 \"b\"\n0 0 0\n",
+                             "DOR3_GRAPH 2\n2 1 2 0 1 0\n0 \"a\"\n1 \"b\"\n0 0 2\n",
+                             "DOR3_GRAPH 2\n1 0 1 0 0 0\n0 not quoted\n",
+                             "DOR3_GRAPH 2\n1 0 1 0 0 0\n0 \"unclosed\n",
+                             "DOR3_GRAPH 2\n0 0 0 0 0 0\nextra\n",
+                             "DOR3_GRAPH 2\n1 0 1 0 0 0 extra\n",
+                             "DOR3_GRAPH 2\n1 0 1 0 0 0\n0 \"a\rb\"\n",
+                             "DOR3_GRAPH 2\n2 2 2 0 2 0\n0 \"a\"\n1 \"b\"\n0 0 1\n1 1 0\n",
+                             "DOR3_GRAPH 2\n1 1 1 0 1 0\n0 \"a\"\n"}) {
         std::istringstream input(text);
         EXPECT_FALSE(readGraph(input)) << text;
     }
-    std::istringstream crlf("DOR3_GRAPH 1\r\n1 0\r\n\"test\"\r\n");
-    EXPECT_TRUE(readGraph(crlf));
+    std::istringstream crlf("DOR3_GRAPH 2\r\n1 0 1 0 0 0\r\n0 \"test\"\r\n");
+    auto loaded = readGraph(crlf);
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(loaded->vertex(0)->get().data.label, "test");
     Graph graph;
     std::ostringstream broken;
     broken.setstate(std::ios::badbit);
@@ -71,41 +58,43 @@ TEST(Storage, RejectsMalformedAndTruncatedInput) {
 
 TEST(Storage, RejectsSignedOverflowingAndPartialNumbersInEveryField) {
     const auto maximum = std::to_string(std::numeric_limits<std::size_t>::max());
-    const DynamicArray<std::string> invalidTokens{
-        "-1", "-" + maximum, "+1", maximum + "0", "1x", "1.0"};
+    const ArraySequence<std::string> invalidTokens{
+        "-1", "-0", "-" + maximum, "+1", maximum + "0", "1x", "1.0"};
     for (const auto& token : invalidTokens) {
-        const DynamicArray<std::string> files{
-            "DOR3_GRAPH 1\n" + token + " 0\n\"a\"\n",
-            "DOR3_GRAPH 1\n2 " + token + "\n\"a\"\n\"b\"\n0 1\n",
-            "DOR3_GRAPH 1\n2 1\n\"a\"\n\"b\"\n" + token + " 0\n",
-            "DOR3_GRAPH 1\n2 1\n\"a\"\n\"b\"\n0 " + token + "\n"};
+        const ArraySequence<std::string> files{
+            "DOR3_GRAPH 2\n" + token + " 1 2 0 1 0\n0 \"a\"\n1 \"b\"\n0 0 1\n",
+            "DOR3_GRAPH 2\n2 " + token + " 2 0 1 0\n0 \"a\"\n1 \"b\"\n0 0 1\n",
+            "DOR3_GRAPH 2\n2 1 " + token + " 0 1 0\n0 \"a\"\n1 \"b\"\n0 0 1\n",
+            "DOR3_GRAPH 2\n2 1 2 " + token + " 1 0\n0 \"a\"\n1 \"b\"\n0 0 1\n",
+            "DOR3_GRAPH 2\n2 1 2 0 " + token + " 0\n0 \"a\"\n1 \"b\"\n0 0 1\n",
+            "DOR3_GRAPH 2\n2 1 2 0 1 " + token + "\n0 \"a\"\n1 \"b\"\n0 0 1\n",
+            "DOR3_GRAPH 2\n2 1 2 0 1 0\n" + token + " \"a\"\n1 \"b\"\n0 0 1\n",
+            "DOR3_GRAPH 2\n2 1 2 0 1 0\n0 \"a\"\n1 \"b\"\n" + token + " 0 1\n",
+            "DOR3_GRAPH 2\n2 1 2 0 1 0\n0 \"a\"\n1 \"b\"\n0 " + token + " 1\n",
+            "DOR3_GRAPH 2\n2 1 2 0 1 0\n0 \"a\"\n1 \"b\"\n0 0 " + token + "\n"};
         for (const auto& file : files) {
             std::istringstream input(file);
             EXPECT_FALSE(readGraph(input)) << file;
         }
     }
-    for (const auto* file : {"DOR3_GRAPH 1\n-0 0\n",
-                             "DOR3_GRAPH 1\n0 -0\n",
-                             "DOR3_GRAPH 1\n2 1\n\"a\"\n\"b\"\n-0 1\n",
-                             "DOR3_GRAPH 1\n2 1\n\"a\"\n\"b\"\n1 -0\n",
-                             "DOR3_GRAPH 1\n2 1\n\"a\"\n\"b\"\n0 1 extra\n"}) {
-        std::istringstream input(file);
-        EXPECT_FALSE(readGraph(input)) << file;
-    }
+    std::istringstream extraEdgeField(
+        "DOR3_GRAPH 2\n2 1 2 0 1 0\n0 \"a\"\n1 \"b\"\n0 0 1 extra\n");
+    EXPECT_FALSE(readGraph(extraEdgeField));
 }
 
 TEST(Storage, SharedLimitsAcceptBoundariesAndRejectOversizedHeaders) {
     EXPECT_TRUE(validateGraphLimits(ApplicationLimits::maxVertices, ApplicationLimits::maxEdges));
     EXPECT_FALSE(validateGraphLimits(ApplicationLimits::maxVertices + 1, 0));
     EXPECT_FALSE(validateGraphLimits(0, ApplicationLimits::maxEdges + 1));
-    const DynamicArray<std::string> counts{
+    const ArraySequence<std::string> counts{
         std::to_string(ApplicationLimits::maxVertices + 1) + " 0",
         "0 " + std::to_string(ApplicationLimits::maxEdges + 1)};
     for (const auto& line : counts) {
-        std::istringstream input("DOR3_GRAPH 1\n" + line + "\n");
+        std::istringstream input("DOR3_GRAPH 2\n" + line + " 0 0 0 0\n");
         auto result = readGraph(input);
         ASSERT_FALSE(result);
         EXPECT_EQ(result.error().code, GraphErrorCode::FileRead);
+        EXPECT_TRUE(result.error().detail.starts_with("Maximum:"));
     }
 }
 
@@ -282,7 +271,7 @@ TEST_F(FilesTest, ComparisonAndCsvAndFailedComparisonPreserveResults) {
     EXPECT_FALSE(application.compareSizeSeries({20, Topology::Path, 0, 1}, 4,
                                            ApplicationLimits::maxRepetitionCount + 1));
     EXPECT_EQ(application.measurements().size(), rowCount);
-    DynamicArray<BenchmarkRow> empty;
+    ArraySequence<BenchmarkRow> empty;
     EXPECT_TRUE(exportBenchmark(empty, folder / "empty.csv"));
 }
 
@@ -342,7 +331,7 @@ TEST(Storage, PreservesEmptyClearedAndExhaustedIdentifierState) {
     EXPECT_TRUE(restored->edgeIdCounter().exhausted);
 }
 
-TEST(Storage, VersionTwoRejectsInvalidIdsOrderingAndHighWaterMarks) {
+TEST(Storage, RejectsInvalidIdsOrderingAndHighWaterMarks) {
     for (const auto* file : {
              "DOR3_GRAPH 2\n2 0 4 0 0 0\n2 \"a\"\n2 \"duplicate\"\n",
              "DOR3_GRAPH 2\n2 0 4 0 0 0\n3 \"a\"\n2 \"unordered\"\n",

@@ -20,11 +20,11 @@ struct BenchmarkRow {
     double edgeProbability = 0;
 };
 
-Result<DynamicArray<BenchmarkRow>> compareAlgorithms(
+Result<ArraySequence<BenchmarkRow>> compareAlgorithms(
     const Graph& graph, std::size_t repetitionCount = BenchmarkDefaults::repetitionCount);
-Result<DynamicArray<BenchmarkRow>> compareSizeSeries(
+Result<ArraySequence<BenchmarkRow>> compareSizeSeries(
     const GenerationParameters& parameters,
     std::size_t sizeCount = BenchmarkDefaults::sizeCount,
     std::size_t repetitionCount = BenchmarkDefaults::repetitionCount);
-Result<void> exportBenchmark(const DynamicArray<BenchmarkRow>& rows,
+Result<void> exportBenchmark(const ArraySequence<BenchmarkRow>& rows,
                              const std::filesystem::path& path);

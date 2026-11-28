@@ -47,7 +47,7 @@ struct ThrowingDefaultData {
 };
 }
 
-TEST(Graph, StorageConstructionFailurePreservesVerticesAndEdges) {
+TEST(Graph, StorageGrowthDoesNotDefaultConstructUnusedVertexData) {
     UnweightedUndirectedGraph<ThrowingDefaultData> graph;
     for (int i = 0; i < 4; ++i) {
         graph.addVertex(ThrowingDefaultData(i));
@@ -55,11 +55,11 @@ TEST(Graph, StorageConstructionFailurePreservesVerticesAndEdges) {
     ASSERT_TRUE(graph.addEdge(0, 1));
     ASSERT_TRUE(graph.addEdge(1, 3));
 
-    ThrowingDefaultData::defaultsBeforeFailure = 2;
-    EXPECT_THROW(graph.addVertex(ThrowingDefaultData(4)), std::runtime_error);
+    ThrowingDefaultData::defaultsBeforeFailure = 0;
+    EXPECT_EQ(graph.addVertex(ThrowingDefaultData(4)), 4);
     ThrowingDefaultData::defaultsBeforeFailure = -1;
 
-    EXPECT_EQ(graph.vertexCount(), 4);
+    EXPECT_EQ(graph.vertexCount(), 5);
     EXPECT_EQ(graph.edgeCount(), 2);
     for (VertexId i = 0; i < 4; ++i) {
         EXPECT_EQ(graph.vertex(i)->get().data.value, static_cast<int>(i));
@@ -68,8 +68,8 @@ TEST(Graph, StorageConstructionFailurePreservesVerticesAndEdges) {
     EXPECT_TRUE(graph.hasEdge(1, 0));
     EXPECT_TRUE(graph.hasEdge(1, 3));
     EXPECT_TRUE(graph.hasEdge(3, 1));
-    EXPECT_EQ(graph.addVertex(ThrowingDefaultData(4)), 4);
-    EXPECT_EQ(graph.vertexCount(), 5);
+    EXPECT_EQ(graph.addVertex(ThrowingDefaultData(5)), 5);
+    EXPECT_EQ(graph.vertexCount(), 6);
     EXPECT_TRUE(graph.hasEdge(0, 1));
 }
 
@@ -270,14 +270,14 @@ TEST(Coloring, GreedyPassUsesProvidedOrderAndRejectsInvalidPermutations) {
     ASSERT_TRUE(graph.addEdge(0, 2));
     ASSERT_TRUE(graph.addEdge(2, 3));
     ASSERT_TRUE(graph.addEdge(3, 1));
-    auto result = colorGraphGreedily(graph, DynamicArray<VertexId>{2, 3, 0, 1});
+    auto result = colorGraphGreedily(graph, ArraySequence<VertexId>{2, 3, 0, 1});
     ASSERT_TRUE(result);
     EXPECT_EQ(result->colorCount, 2);
     EXPECT_EQ(result->processingOrder[0], 2);
     EXPECT_TRUE(validateColoring(graph, *result));
-    EXPECT_FALSE(colorGraphGreedily(graph, DynamicArray<VertexId>{0, 1, 2}));
-    EXPECT_FALSE(colorGraphGreedily(graph, DynamicArray<VertexId>{0, 1, 2, 2}));
-    EXPECT_FALSE(colorGraphGreedily(graph, DynamicArray<VertexId>{0, 1, 2, 4}));
+    EXPECT_FALSE(colorGraphGreedily(graph, ArraySequence<VertexId>{0, 1, 2}));
+    EXPECT_FALSE(colorGraphGreedily(graph, ArraySequence<VertexId>{0, 1, 2, 2}));
+    EXPECT_FALSE(colorGraphGreedily(graph, ArraySequence<VertexId>{0, 1, 2, 4}));
 }
 
 TEST(Catalogs, EntriesHaveUniqueIdsNamesAndCallableImplementations) {

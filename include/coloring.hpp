@@ -1,7 +1,7 @@
 #pragma once
 
 #include "graph.hpp"
-#include <common/heap_sort.hpp>
+#include "sequence_heap_sort.hpp"
 #include <limits>
 #include <optional>
 #include <functional>
@@ -14,7 +14,7 @@ enum class ColoringAlgorithm {
     Count
 };
 
-inline std::optional<std::size_t> coloringVertexPosition(const DynamicArray<VertexId>& ids, VertexId id) {
+inline std::optional<std::size_t> coloringVertexPosition(const ArraySequence<VertexId>& ids, VertexId id) {
     std::size_t first = 0, last = ids.size();
     while (first < last) {
         const auto middle = first + (last - first) / 2;
@@ -30,9 +30,9 @@ inline std::optional<std::size_t> coloringVertexPosition(const DynamicArray<Vert
 }
 
 struct ColoringResult {
-    DynamicArray<VertexId> vertexIds;
-    DynamicArray<std::size_t> colors;
-    DynamicArray<VertexId> processingOrder;
+    ArraySequence<VertexId> vertexIds;
+    ArraySequence<std::size_t> colors;
+    ArraySequence<VertexId> processingOrder;
     std::size_t colorCount = 0;
 
     Result<std::size_t> color(VertexId id) const {
@@ -47,22 +47,19 @@ struct ColoringResult {
 template <class TGraph>
 concept ColorableGraph = requires(const TGraph& graph, VertexId id) {
     { graph.vertexCount() } -> std::convertible_to<std::size_t>;
-    { graph.vertexIds() } -> std::same_as<DynamicArray<VertexId>>;
-    { graph.neighbors(id) } -> std::same_as<Result<std::reference_wrapper<const DynamicArray<AdjacencyEntry>>>>;
+    { graph.vertexIds() } -> std::same_as<ArraySequence<VertexId>>;
+    { graph.neighbors(id) } -> std::same_as<Result<std::reference_wrapper<const ArraySequence<AdjacencyEntry>>>>;
 };
 
 template <ColorableGraph TGraph>
-Result<ColoringResult> colorGraphGreedily(const TGraph& graph, DynamicArray<VertexId> processingOrder) {
+Result<ColoringResult> colorGraphGreedily(const TGraph& graph, ArraySequence<VertexId> processingOrder) {
     const auto count = graph.vertexCount();
     if (processingOrder.size() != count) {
         return failure(GraphErrorCode::InvalidParameters, "Order must contain every vertex once.");
     }
     ColoringResult result;
     result.vertexIds = graph.vertexIds();
-    DynamicArray<bool> seenVertices(count);
-    for (std::size_t i = 0; i < count; ++i) {
-        seenVertices.push_back(false);
-    }
+    ArraySequence<bool> seenVertices(count, false);
     for (const auto id : processingOrder) {
         auto position = coloringVertexPosition(result.vertexIds, id);
         if (!position || seenVertices[*position]) {
@@ -72,12 +69,8 @@ Result<ColoringResult> colorGraphGreedily(const TGraph& graph, DynamicArray<Vert
     }
     constexpr auto uncolored = std::numeric_limits<std::size_t>::max();
     result.processingOrder = std::move(processingOrder);
-    result.colors = DynamicArray<std::size_t>(count);
-    DynamicArray<std::size_t> marks(count);
-    for (std::size_t i = 0; i < count; ++i) {
-        result.colors.push_back(uncolored);
-        marks.push_back(uncolored);
-    }
+    result.colors = ArraySequence<std::size_t>(count, uncolored);
+    ArraySequence<std::size_t> marks(count, uncolored);
     for (std::size_t step = 0; step < count; ++step) {
         const auto vertex = result.processingOrder[step];
         const auto& neighbors = graph.neighbors(vertex)->get();
@@ -107,13 +100,15 @@ Result<ColoringResult> colorGraphSequentially(const TGraph& graph) {
 template <ColorableGraph TGraph>
 Result<ColoringResult> colorGraphByDescendingDegree(const TGraph& graph) {
     struct VertexDegree { VertexId vertex; std::size_t degree; };
-    DynamicArray<VertexDegree> degrees(graph.vertexCount());
+    ArraySequence<VertexDegree> degrees;
+    degrees.reserve(graph.vertexCount());
     for (const auto id : graph.vertexIds())
         degrees.push_back({id, graph.neighbors(id)->get().size()});
     heapSort(degrees, [](const VertexDegree& first, const VertexDegree& second) {
         return first.degree != second.degree ? first.degree > second.degree : first.vertex < second.vertex;
     });
-    DynamicArray<VertexId> order(graph.vertexCount());
+    ArraySequence<VertexId> order;
+    order.reserve(graph.vertexCount());
     for (const auto& entry : degrees) {
         order.push_back(entry.vertex);
     }
@@ -162,13 +157,11 @@ Result<void> validateColoring(const TGraph& graph, const ColoringResult& result)
         result.processingOrder.size() != count || result.colorCount > count)
         return failure(GraphErrorCode::InvalidColoring, "Result size differs from graph size.");
     const auto ids = graph.vertexIds();
-    DynamicArray<bool> seenVertices(count), usedColors(count);
+    ArraySequence<bool> seenVertices(count, false), usedColors(count, false);
     for (std::size_t i = 0; i < count; ++i) {
         if (result.vertexIds[i] != ids[i]) {
             return failure(GraphErrorCode::InvalidColoring, "Result vertex IDs differ from graph IDs.");
         }
-        seenVertices.push_back(false);
-        usedColors.push_back(false);
     }
     for (std::size_t i = 0; i < count; ++i) {
         auto position = coloringVertexPosition(ids, result.processingOrder[i]);

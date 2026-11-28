@@ -16,12 +16,12 @@ static Result<void> validateRepetitionCount(std::size_t repetitionCount) {
     return {};
 }
 
-Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::size_t repetitionCount) {
+Result<ArraySequence<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::size_t repetitionCount) {
     auto repetitionValidation = validateRepetitionCount(repetitionCount);
     if (!repetitionValidation) {
         return std::unexpected(repetitionValidation.error());
     }
-    DynamicArray<BenchmarkRow> rows;
+    ArraySequence<BenchmarkRow> rows;
     for (const auto& algorithm : coloringAlgorithmCatalog<Graph>) {
         auto warmup = algorithm.colorGraph(graph);
         if (!warmup) {
@@ -31,7 +31,7 @@ Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::si
         if (!valid) {
             return std::unexpected(valid.error());
         }
-        DynamicArray<double> samples;
+        ArraySequence<double> samples;
         for (std::size_t iteration = 0; iteration < repetitionCount; ++iteration) {
             const auto start = std::chrono::steady_clock::now();
             auto result = algorithm.colorGraph(graph);
@@ -62,7 +62,7 @@ Result<DynamicArray<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::si
     return rows;
 }
 
-Result<DynamicArray<BenchmarkRow>>
+Result<ArraySequence<BenchmarkRow>>
 compareSizeSeries(const GenerationParameters& parameters,
                   std::size_t sizeCount,
                   std::size_t repetitionCount) {
@@ -87,7 +87,7 @@ compareSizeSeries(const GenerationParameters& parameters,
     if (!firstValidation) {
         return std::unexpected(firstValidation.error());
     }
-    DynamicArray<BenchmarkRow> rows;
+    ArraySequence<BenchmarkRow> rows;
     for (std::size_t point = 1; point <= sizeCount; ++point) {
         auto current = parameters;
         current.vertexCount = parameters.vertexCount * point / sizeCount;
@@ -110,7 +110,7 @@ compareSizeSeries(const GenerationParameters& parameters,
     return rows;
 }
 
-Result<void> exportBenchmark(const DynamicArray<BenchmarkRow>& rows,
+Result<void> exportBenchmark(const ArraySequence<BenchmarkRow>& rows,
                              const std::filesystem::path& path) {
     return writeFile(path, [&](std::ostream& output) -> Result<void> {
         output.imbue(std::locale::classic());

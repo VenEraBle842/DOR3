@@ -54,8 +54,7 @@ Result<Graph> readGraph(std::istream& input) {
     if (line.ends_with('\r')) {
         line.pop_back();
     }
-    const bool legacy = line == "DOR3_GRAPH 1";
-    if (!input || (!legacy && line != graphFileHeader)) {
+    if (!input || line != graphFileHeader) {
         return failure(GraphErrorCode::FileRead, "Expected " + std::string(graphFileHeader) + " header.");
     }
     std::size_t vertices = 0, edges = 0;
@@ -67,9 +66,9 @@ Result<Graph> readGraph(std::istream& input) {
     GraphIdCounter vertexCounter, edgeCounter;
     std::size_t vertexExhausted = 0, edgeExhausted = 0;
     if (!readUnsigned(counts, vertices) || !readUnsigned(counts, edges) ||
-        (!legacy && (!readUnsigned(counts, vertexCounter.next) || !readUnsigned(counts, vertexExhausted) ||
-                     !readUnsigned(counts, edgeCounter.next) || !readUnsigned(counts, edgeExhausted) ||
-                     vertexExhausted > 1 || edgeExhausted > 1)) || !(counts >> std::ws).eof()) {
+        !readUnsigned(counts, vertexCounter.next) || !readUnsigned(counts, vertexExhausted) ||
+        !readUnsigned(counts, edgeCounter.next) || !readUnsigned(counts, edgeExhausted) ||
+        vertexExhausted > 1 || edgeExhausted > 1 || !(counts >> std::ws).eof()) {
         return failure(GraphErrorCode::FileRead, "Invalid counts or identifier high-water marks.");
     }
     auto sizeValidation = validateGraphLimits(vertices, edges);
@@ -83,8 +82,8 @@ Result<Graph> readGraph(std::istream& input) {
             return failure(GraphErrorCode::FileRead, "Missing vertex at index " + std::to_string(i));
         }
         std::istringstream record(line);
-        VertexId id = i;
-        if (!legacy && !readUnsigned(record, id)) {
+        VertexId id = 0;
+        if (!readUnsigned(record, id)) {
             return failure(GraphErrorCode::FileRead, "Invalid vertex ID.");
         }
         record >> std::ws;
@@ -105,9 +104,9 @@ Result<Graph> readGraph(std::istream& input) {
         }
         std::istringstream record(line);
         record.imbue(std::locale::classic());
-        EdgeId id = i;
-        if ((!legacy && !readUnsigned(record, id)) || !readUnsigned(record, first) || !readUnsigned(record, second) ||
-            !(record >> std::ws).eof()) {
+        EdgeId id = 0;
+        if (!readUnsigned(record, id) || !readUnsigned(record, first) ||
+            !readUnsigned(record, second) || !(record >> std::ws).eof()) {
             return failure(GraphErrorCode::FileRead, "Invalid edge " + std::to_string(i));
         }
         auto added = graph.addEdgeWithId(id, first, second);
@@ -116,13 +115,11 @@ Result<Graph> readGraph(std::istream& input) {
                            "Edge " + std::to_string(i) + ": " + formatError(added.error()));
         }
     }
-    if (!legacy) {
-        vertexCounter.exhausted = vertexExhausted != 0;
-        edgeCounter.exhausted = edgeExhausted != 0;
-        auto advanced = graph.advanceIdCounters(vertexCounter, edgeCounter);
-        if (!advanced) {
-            return failure(GraphErrorCode::FileRead, formatError(advanced.error()));
-        }
+    vertexCounter.exhausted = vertexExhausted != 0;
+    edgeCounter.exhausted = edgeExhausted != 0;
+    auto advanced = graph.advanceIdCounters(vertexCounter, edgeCounter);
+    if (!advanced) {
+        return failure(GraphErrorCode::FileRead, formatError(advanced.error()));
     }
     input >> std::ws;
     if (!input.eof() || input.bad()) {

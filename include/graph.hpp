@@ -2,7 +2,7 @@
 
 #include "errors.hpp"
 #include <concepts>
-#include <containers/dynamic_array.hpp>
+#include "array_sequence.hpp"
 #include <dictionary/sorted_array_dictionary.hpp>
 #include <cstddef>
 #include <functional>
@@ -79,9 +79,9 @@ bool updateGraphDictionaryEntry(IDictionary<std::size_t, TValue>& dictionary,
 
 template <GraphData TVertexData>
 class UndirectedGraphBase {
-    DynamicArray<GraphVertex<TVertexData>> vertices_;
-    DynamicArray<GraphEdge> edges_;
-    DynamicArray<DynamicArray<AdjacencyEntry>> adjacency_;
+    ArraySequence<GraphVertex<TVertexData>> vertices_;
+    ArraySequence<GraphEdge> edges_;
+    ArraySequence<ArraySequence<AdjacencyEntry>> adjacency_;
     SortedArrayDictionary<VertexId, std::size_t> vertexPositions_;
     SortedArrayDictionary<EdgeId, std::size_t> edgePositions_;
     GraphIdCounter vertexCounter_, edgeCounter_;
@@ -91,7 +91,7 @@ class UndirectedGraphBase {
     IDictionary<EdgeId, std::size_t>& edgeIndex() noexcept { return edgePositions_; }
     const IDictionary<EdgeId, std::size_t>& edgeIndex() const noexcept { return edgePositions_; }
 
-    static void eraseNeighbor(DynamicArray<AdjacencyEntry>& entries, EdgeId id) noexcept {
+    static void eraseNeighbor(ArraySequence<AdjacencyEntry>& entries, EdgeId id) noexcept {
         for (std::size_t i = 0; i < entries.size(); ++i) {
             if (entries[i].edge == id) {
                 entries[i] = entries[entries.size() - 1];
@@ -101,25 +101,12 @@ class UndirectedGraphBase {
         }
     }
 
-    template <class T>
-    static void reserveOne(DynamicArray<T>& items) {
-        if (items.size() < items.capacity()) return;
-        if (items.capacity() > std::numeric_limits<std::size_t>::max() / 2) {
-            throw std::length_error("Graph storage capacity exhausted");
-        }
-        DynamicArray<T> replacement(items.empty() ? 4 : items.capacity() * 2);
-        for (std::size_t i = 0; i < items.size(); ++i) {
-            replacement.push_back(std::move(items[i]));
-        }
-        items = std::move(replacement);
-    }
-
     Result<VertexId> insertVertex(VertexId id, TVertexData data) {
         if (!vertexCounter_.accepts(id)) {
             return failure(GraphErrorCode::InvalidParameters, "Vertex ID has already been issued or skipped.");
         }
-        reserveOne(vertices_);
-        reserveOne(adjacency_);
+        vertices_.reserve(vertices_.size() + 1);
+        adjacency_.reserve(adjacency_.size() + 1);
         auto indexed = addGraphDictionaryEntry(vertexIndex(), id, vertices_.size());
         if (!indexed) {
             return std::unexpected(indexed.error());
@@ -184,9 +171,9 @@ protected:
         }
         auto& left = adjacency_[*vertexIndex().find(first)];
         auto& right = adjacency_[*vertexIndex().find(second)];
-        reserveOne(edges_);
-        reserveOne(left);
-        reserveOne(right);
+        edges_.reserve(edges_.size() + 1);
+        left.reserve(left.size() + 1);
+        right.reserve(right.size() + 1);
         auto indexed = addGraphDictionaryEntry(edgeIndex(), id, edges_.size());
         if (!indexed) {
             return std::unexpected(indexed.error());
@@ -235,7 +222,7 @@ public:
         }
         return std::cref(edges_[*position]);
     }
-    Result<std::reference_wrapper<const DynamicArray<AdjacencyEntry>>> neighbors(VertexId id) const {
+    Result<std::reference_wrapper<const ArraySequence<AdjacencyEntry>>> neighbors(VertexId id) const {
         auto position = vertexIndex().find(id);
         if (!position) {
             return failure(GraphErrorCode::InvalidVertex);
@@ -249,8 +236,20 @@ public:
         }
         return list->get().size();
     }
-    DynamicArray<VertexId> vertexIds() const { return vertexIndex().getKeys(); }
-    DynamicArray<EdgeId> edgeIds() const { return edgeIndex().getKeys(); }
+    ArraySequence<VertexId> vertexIds() const {
+        const auto keys = vertexIndex().getKeys();
+        ArraySequence<VertexId> result;
+        result.reserve(keys.size());
+        for (const auto key : keys) result.push_back(key);
+        return result;
+    }
+    ArraySequence<EdgeId> edgeIds() const {
+        const auto keys = edgeIndex().getKeys();
+        ArraySequence<EdgeId> result;
+        result.reserve(keys.size());
+        for (const auto key : keys) result.push_back(key);
+        return result;
+    }
 
     Result<EdgeId> edgeId(VertexId first, VertexId second) const {
         if (!containsVertex(first) || !containsVertex(second)) {

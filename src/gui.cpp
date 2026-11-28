@@ -201,7 +201,7 @@ class GraphCanvas final : public wxPanel {
         }
         const auto size = GetClientSize();
         const auto radius = std::max(10, std::min(size.x, size.y) / 2 - 36);
-        DynamicArray<Position> positions;
+        ArraySequence<Position> positions;
         for (std::size_t i = 0; i < count; ++i) {
             const double angle =
                 2 * std::numbers::pi * static_cast<double>(i) / static_cast<double>(count) -
@@ -247,8 +247,8 @@ class VertexTable final : public wxListCtrl {
 
     const GraphApplication& application_;
     const bool& busy_;
-    DynamicArray<VertexId> vertexIds_;
-    DynamicArray<std::size_t> processingSteps_;
+    ArraySequence<VertexId> vertexIds_;
+    ArraySequence<std::size_t> processingSteps_;
 
     wxString OnGetItemText(long row, long column) const override {
         if (busy_) {
