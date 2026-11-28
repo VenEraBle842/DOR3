@@ -4,11 +4,8 @@
 #include <random>
 #include <iterator>
 
-Result<void> buildPathEdges(Graph& graph, const GenerationParameters& parameters) {
+Result<void> buildPathEdges(Graph& graph, const GenerationParameters&) {
     const auto ids = graph.vertexIds();
-    if (ids.size() != parameters.vertexCount) {
-        return failure(GraphErrorCode::InvalidParameters, "Topology vertex count differs from graph size.");
-    }
     for (std::size_t position = 1; position < ids.size(); ++position) {
         auto added = graph.addEdge(ids[position - 1], ids[position]);
         if (!added) {
@@ -34,11 +31,8 @@ Result<void> buildCycleEdges(Graph& graph, const GenerationParameters& parameter
     return {};
 }
 
-Result<void> buildStarEdges(Graph& graph, const GenerationParameters& parameters) {
+Result<void> buildStarEdges(Graph& graph, const GenerationParameters&) {
     const auto ids = graph.vertexIds();
-    if (ids.size() != parameters.vertexCount) {
-        return failure(GraphErrorCode::InvalidParameters, "Topology vertex count differs from graph size.");
-    }
     for (std::size_t position = 1; position < ids.size(); ++position) {
         auto added = graph.addEdge(ids[0], ids[position]);
         if (!added) {
@@ -48,11 +42,8 @@ Result<void> buildStarEdges(Graph& graph, const GenerationParameters& parameters
     return {};
 }
 
-Result<void> buildCompleteEdges(Graph& graph, const GenerationParameters& parameters) {
+Result<void> buildCompleteEdges(Graph& graph, const GenerationParameters&) {
     const auto ids = graph.vertexIds();
-    if (ids.size() != parameters.vertexCount) {
-        return failure(GraphErrorCode::InvalidParameters, "Topology vertex count differs from graph size.");
-    }
     for (std::size_t first = 0; first < ids.size(); ++first) {
         for (std::size_t second = first + 1; second < ids.size(); ++second) {
             auto added = graph.addEdge(ids[first], ids[second]);
@@ -66,9 +57,6 @@ Result<void> buildCompleteEdges(Graph& graph, const GenerationParameters& parame
 
 Result<void> buildRandomEdges(Graph& graph, const GenerationParameters& parameters) {
     const auto ids = graph.vertexIds();
-    if (ids.size() != parameters.vertexCount) {
-        return failure(GraphErrorCode::InvalidParameters, "Topology vertex count differs from graph size.");
-    }
     std::mt19937 random(parameters.seed);
     // Прямое преобразование обеспечивает воспроизводимость в различных реализациях
     constexpr auto randomRange = static_cast<double>(std::mt19937::max()) -
@@ -87,9 +75,20 @@ Result<void> buildRandomEdges(Graph& graph, const GenerationParameters& paramete
     return {};
 }
 
+template <class TBuilder>
+Result<void> buildTopologyEdges(Graph& graph, const GenerationParameters& parameters, TBuilder builder) {
+    if (graph.vertexCount() != parameters.vertexCount) {
+        return failure(GraphErrorCode::InvalidParameters, "Topology vertex count differs from graph size.");
+    }
+    return builder(graph, parameters);
+}
+
 const TopologyDescriptor topologyCatalog[] = {
 #define DOR3_TOPOLOGY(id, displayName, minimumVertexCount, usesRandomParameters, implementation) \
-    {Topology::id, displayName, minimumVertexCount, usesRandomParameters, implementation},
+    {Topology::id, displayName, minimumVertexCount, usesRandomParameters, \
+     [](Graph& graph, const GenerationParameters& parameters) { \
+         return buildTopologyEdges(graph, parameters, implementation); \
+     }},
 #include "topology_catalog.def"
 #undef DOR3_TOPOLOGY
 };
@@ -136,7 +135,10 @@ Result<Graph> generateGraph(const GenerationParameters& parameters) {
     }
     Graph graph;
     for (std::size_t i = 0; i < parameters.vertexCount; ++i) {
-        graph.addVertex({std::to_string(i)});
+        auto added = graph.addVertex({std::to_string(i)});
+        if (!added) {
+            return std::unexpected(added.error());
+        }
     }
     auto entry = findTopologyDescriptor(parameters.topology);
     if (!entry) {

@@ -8,7 +8,6 @@
 #include <functional>
 #include <limits>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <utility>
@@ -21,9 +20,9 @@ struct VertexData {
 };
 
 template <class TData>
-concept GraphData = std::default_initializable<TData> && std::movable<TData> &&
-                    std::is_nothrow_move_constructible_v<TData> &&
-                    std::is_nothrow_move_assignable_v<TData>;
+concept VertexDataType = std::movable<TData> &&
+                         std::is_nothrow_move_constructible_v<TData> &&
+                         std::is_nothrow_move_assignable_v<TData>;
 
 template <class TData>
 struct GraphVertex {
@@ -33,26 +32,26 @@ struct GraphVertex {
 
 struct GraphEdge {
     EdgeId id{};
-    VertexId first{}, second{};
+    VertexId firstVertexId{}, secondVertexId{};
 };
 
 struct AdjacencyEntry {
-    VertexId neighbor{};
-    EdgeId edge{};
+    VertexId neighborId{};
+    EdgeId edgeId{};
 };
 
 struct GraphIdCounter {
-    std::size_t next = 0;
+    std::size_t nextId = 0;
     bool exhausted = false;
 
-    bool accepts(std::size_t id) const noexcept { return !exhausted && id >= next; }
+    bool accepts(std::size_t id) const noexcept { return !exhausted && id >= nextId; }
     void consume(std::size_t id) noexcept {
         exhausted = id == std::numeric_limits<std::size_t>::max();
-        next = exhausted ? id : id + 1;
+        nextId = exhausted ? id : id + 1;
     }
     void merge(const GraphIdCounter& other) noexcept {
-        if (other.next > next) {
-            next = other.next;
+        if (other.nextId > nextId) {
+            nextId = other.nextId;
         }
         exhausted = exhausted || other.exhausted;
     }
@@ -77,7 +76,7 @@ bool updateGraphDictionaryEntry(IDictionary<std::size_t, TValue>& dictionary,
     return dictionary.modify(id, std::ref(replace));
 }
 
-template <GraphData TVertexData>
+template <VertexDataType TVertexData>
 class UndirectedGraphBase {
     ArraySequence<GraphVertex<TVertexData>> vertices_;
     ArraySequence<GraphEdge> edges_;
@@ -93,7 +92,7 @@ class UndirectedGraphBase {
 
     static void eraseNeighbor(ArraySequence<AdjacencyEntry>& entries, EdgeId id) noexcept {
         for (std::size_t i = 0; i < entries.size(); ++i) {
-            if (entries[i].edge == id) {
+            if (entries[i].edgeId == id) {
                 entries[i] = entries[entries.size() - 1];
                 entries.pop_back();
                 return;
@@ -102,6 +101,9 @@ class UndirectedGraphBase {
     }
 
     Result<VertexId> insertVertex(VertexId id, TVertexData data) {
+        if (vertexCounter_.exhausted) {
+            return failure(GraphErrorCode::IdentifierExhausted);
+        }
         if (!vertexCounter_.accepts(id)) {
             return failure(GraphErrorCode::InvalidParameters, "Vertex ID has already been issued or skipped.");
         }
@@ -145,15 +147,26 @@ protected:
     virtual void eraseEdgeData(EdgeId) noexcept {}
     virtual void clearEdgeData() noexcept {}
 
-    Result<void> validateEdgeInsertion(VertexId first, VertexId second, EdgeId id) const {
-        if (!containsVertex(first) || !containsVertex(second)) {
+    struct PreparedEdgeInsertion {
+        EdgeId id;
+        std::size_t firstPosition, secondPosition;
+    };
+
+    Result<PreparedEdgeInsertion> prepareEdgeInsertion(VertexId first, VertexId second, EdgeId id) {
+        const auto firstPosition = vertexIndex().find(first);
+        const auto secondPosition = vertexIndex().find(second);
+        if (!firstPosition || !secondPosition) {
             return failure(GraphErrorCode::InvalidVertex);
         }
         if (first == second) {
             return failure(GraphErrorCode::SelfLoop);
         }
-        if (hasEdge(first, second)) {
-            return failure(GraphErrorCode::DuplicateEdge);
+        auto& left = adjacency_[*firstPosition];
+        auto& right = adjacency_[*secondPosition];
+        for (const auto& entry : left) {
+            if (entry.neighborId == second) {
+                return failure(GraphErrorCode::DuplicateEdge);
+            }
         }
         if (edgeCounter_.exhausted) {
             return failure(GraphErrorCode::IdentifierExhausted);
@@ -161,33 +174,30 @@ protected:
         if (!edgeCounter_.accepts(id)) {
             return failure(GraphErrorCode::InvalidParameters, "Edge ID has already been issued or skipped.");
         }
-        return {};
-    }
-
-    EdgeId nextEdgeId() const noexcept { return edgeCounter_.next; }
-
-    Result<EdgeId> insertEdge(VertexId first, VertexId second, EdgeId id) {
-        auto valid = validateEdgeInsertion(first, second, id);
-        if (!valid) {
-            return std::unexpected(valid.error());
-        }
-        auto& left = adjacency_[*vertexIndex().find(first)];
-        auto& right = adjacency_[*vertexIndex().find(second)];
         auto edgesReserved = edges_.reserve(edges_.size() + 1);
         if (!edgesReserved) return failure(edgesReserved.error());
         auto leftReserved = left.reserve(left.size() + 1);
         if (!leftReserved) return failure(leftReserved.error());
         auto rightReserved = right.reserve(right.size() + 1);
         if (!rightReserved) return failure(rightReserved.error());
-        auto indexed = addGraphDictionaryEntry(edgeIndex(), id, edges_.size());
+        return PreparedEdgeInsertion{id, *firstPosition, *secondPosition};
+    }
+
+    EdgeId nextEdgeId() const noexcept { return edgeCounter_.nextId; }
+
+    // Подготовка уже проверила концы и зарезервировала место для всех 3-х записей
+    Result<EdgeId> insertEdge(const PreparedEdgeInsertion& insertion) {
+        const auto first = vertices_[insertion.firstPosition].id;
+        const auto second = vertices_[insertion.secondPosition].id;
+        auto indexed = addGraphDictionaryEntry(edgeIndex(), insertion.id, edges_.size());
         if (!indexed) {
             return std::unexpected(indexed.error());
         }
-        edges_.push_back({id, first, second}).value();
-        left.push_back({second, id}).value();
-        right.push_back({first, id}).value();
-        edgeCounter_.consume(id);
-        return id;
+        edges_.push_back({insertion.id, first, second}).value();
+        adjacency_[insertion.firstPosition].push_back({second, insertion.id}).value();
+        adjacency_[insertion.secondPosition].push_back({first, insertion.id}).value();
+        edgeCounter_.consume(insertion.id);
+        return insertion.id;
     }
 
 public:
@@ -198,19 +208,21 @@ public:
     bool containsVertex(VertexId id) const { return vertexIndex().containsKey(id); }
     bool containsEdge(EdgeId id) const { return edgeIndex().containsKey(id); }
 
-    VertexId addVertex(TVertexData data) {
-        if (vertexCounter_.exhausted) {
-            throw std::overflow_error("Vertex identifier space exhausted");
-        }
-        auto added = insertVertex(vertexCounter_.next, std::move(data));
-        if (!added) {
-            throw std::logic_error(formatError(added.error()));
-        }
-        return *added;
+    Result<VertexId> addVertex(TVertexData data) {
+        return insertVertex(vertexCounter_.nextId, std::move(data));
     }
 
     Result<VertexId> addVertexWithId(VertexId id, TVertexData data) {
         return insertVertex(id, std::move(data));
+    }
+
+    Result<void> setVertexData(VertexId id, TVertexData data) {
+        const auto position = vertexIndex().find(id);
+        if (!position) {
+            return failure(GraphErrorCode::InvalidVertex);
+        }
+        vertices_[*position].data = std::move(data);
+        return {};
     }
 
     Result<std::reference_wrapper<const GraphVertex<TVertexData>>> vertex(VertexId id) const {
@@ -257,18 +269,19 @@ public:
     }
 
     Result<EdgeId> edgeId(VertexId first, VertexId second) const {
-        if (!containsVertex(first) || !containsVertex(second)) {
+        const auto firstPosition = vertexIndex().find(first);
+        if (!firstPosition || !vertexIndex().containsKey(second)) {
             return failure(GraphErrorCode::InvalidVertex);
         }
-        const auto& entries = neighbors(first)->get();
+        const auto& entries = adjacency_[*firstPosition];
         for (const auto& entry : entries) {
-            if (entry.neighbor == second) {
-                return entry.edge;
+            if (entry.neighborId == second) {
+                return entry.edgeId;
             }
         }
         return failure(GraphErrorCode::MissingEdge);
     }
-    bool hasEdge(VertexId first, VertexId second) const { return edgeId(first, second).has_value(); }
+    bool containsEdge(VertexId first, VertexId second) const { return edgeId(first, second).has_value(); }
 
     Result<void> removeEdge(EdgeId id) {
         auto position = edgeIndex().find(id);
@@ -277,8 +290,8 @@ public:
         }
         const auto removed = edges_[*position];
         eraseEdgeData(id);
-        eraseNeighbor(adjacency_[*vertexIndex().find(removed.first)], id);
-        eraseNeighbor(adjacency_[*vertexIndex().find(removed.second)], id);
+        eraseNeighbor(adjacency_[*vertexIndex().find(removed.firstVertexId)], id);
+        eraseNeighbor(adjacency_[*vertexIndex().find(removed.secondVertexId)], id);
         const auto last = edges_.size() - 1;
         if (*position != last) {
             edges_[*position] = edges_[last];
@@ -302,7 +315,7 @@ public:
         }
         auto& entries = adjacency_[*position];
         while (!entries.empty()) {
-            (void)removeEdge(entries[entries.size() - 1].edge);
+            (void)removeEdge(entries[entries.size() - 1].edgeId);
         }
         const auto last = vertices_.size() - 1;
         if (*position != last) {
@@ -328,8 +341,8 @@ public:
     GraphIdCounter edgeIdCounter() const noexcept { return edgeCounter_; }
     Result<void> advanceIdCounters(GraphIdCounter vertices, GraphIdCounter edges) {
         const auto valid = [](GraphIdCounter current, GraphIdCounter proposed) {
-            return proposed.next >= current.next && (!current.exhausted || proposed.exhausted) &&
-                   (!proposed.exhausted || proposed.next == std::numeric_limits<std::size_t>::max());
+            return proposed.nextId >= current.nextId && (!current.exhausted || proposed.exhausted) &&
+                   (!proposed.exhausted || proposed.nextId == std::numeric_limits<std::size_t>::max());
         };
         if (!valid(vertexCounter_, vertices) || !valid(edgeCounter_, edges)) {
             return failure(GraphErrorCode::InvalidParameters, "Invalid identifier high-water marks.");
@@ -340,7 +353,7 @@ public:
     }
 };
 
-template <GraphData TVertexData>
+template <VertexDataType TVertexData>
 class UnweightedUndirectedGraph final : public UndirectedGraphBase<TVertexData> {
 public:
     UnweightedUndirectedGraph() = default;
@@ -348,14 +361,18 @@ public:
     UnweightedUndirectedGraph& operator=(UnweightedUndirectedGraph&&) noexcept = default;
 
     Result<EdgeId> addEdge(VertexId first, VertexId second) {
-        return this->insertEdge(first, second, this->nextEdgeId());
+        return addEdgeWithId(this->nextEdgeId(), first, second);
     }
     Result<EdgeId> addEdgeWithId(EdgeId id, VertexId first, VertexId second) {
-        return this->insertEdge(first, second, id);
+        auto insertion = this->prepareEdgeInsertion(first, second, id);
+        if (!insertion) {
+            return std::unexpected(insertion.error());
+        }
+        return this->insertEdge(*insertion);
     }
 };
 
-template <GraphData TVertexData, class TWeight>
+template <VertexDataType TVertexData, class TWeight>
 requires std::move_constructible<TWeight>
 class WeightedUndirectedGraph final : public UndirectedGraphBase<TVertexData> {
     using WeightHandle = std::shared_ptr<const TWeight>;
@@ -375,16 +392,16 @@ public:
 
     Result<EdgeId> addEdge(VertexId first, VertexId second, TWeight weight) {
         const auto id = this->nextEdgeId();
-        auto valid = this->validateEdgeInsertion(first, second, id);
-        if (!valid) {
-            return std::unexpected(valid.error());
+        auto insertion = this->prepareEdgeInsertion(first, second, id);
+        if (!insertion) {
+            return std::unexpected(insertion.error());
         }
         auto added = addGraphDictionaryEntry(weights(), id, std::make_shared<const TWeight>(std::move(weight)));
         if (!added) {
             return std::unexpected(added.error());
         }
         try {
-            auto edge = this->insertEdge(first, second, id);
+            auto edge = this->insertEdge(*insertion);
             if (!edge) {
                 eraseEdgeData(id);
             }
@@ -413,5 +430,4 @@ public:
     }
 };
 
-using ColoringGraph = UnweightedUndirectedGraph<VertexData>;
-using Graph = ColoringGraph;
+using Graph = UnweightedUndirectedGraph<VertexData>;

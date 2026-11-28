@@ -3,6 +3,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <application_limits.hpp>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <storage.hpp>
@@ -122,7 +123,7 @@ TEST_F(FilesTest, FailedWriteKeepsExistingTarget) {
     }
     EXPECT_EQ(entries, 1);
     Graph invalid;
-    invalid.addVertex({"invalid\nlabel"});
+    ASSERT_TRUE(invalid.addVertex({"invalid\nlabel"}));
     EXPECT_FALSE(saveGraph(invalid, path));
     expectNoTemporaryDirectories();
     std::ifstream preserved(path);
@@ -136,7 +137,7 @@ TEST_F(FilesTest, FailedWriteKeepsExistingTarget) {
 TEST_F(FilesTest, OversizedGraphCannotBeWrittenOrReplaceExistingFile) {
     Graph graph;
     for (std::size_t i = 0; i <= ApplicationLimits::maxVertices; ++i) {
-        graph.addVertex({""});
+        ASSERT_TRUE(graph.addVertex({""}));
     }
     std::ostringstream output;
     auto result = writeGraph(graph, output);
@@ -176,7 +177,7 @@ TEST(GraphApplication, EdgeLimitRejectsNewEdgeWithoutInvalidatingColoring) {
     for (std::size_t i = 0; i < ApplicationLimits::maxVertices; ++i) {
         ASSERT_TRUE(application.addVertex(""));
     }
-    // Рёбра распределены по вершинам, чтобы граничный тест оставался разреженным.
+    // Ребра распределены по вершинам, чтобы граничный тест оставался разреженным
     constexpr auto neighborsPerVertex = ApplicationLimits::maxEdges / ApplicationLimits::maxVertices + 1;
     for (VertexId first = 0; first < ApplicationLimits::maxVertices &&
                              application.graph().edgeCount() < ApplicationLimits::maxEdges; ++first) {
@@ -189,13 +190,13 @@ TEST(GraphApplication, EdgeLimitRejectsNewEdgeWithoutInvalidatingColoring) {
     ASSERT_EQ(application.graph().edgeCount(), ApplicationLimits::maxEdges);
     ASSERT_TRUE(application.computeColoring(ColoringAlgorithm::Sequential));
     constexpr VertexId target = neighborsPerVertex + 1;
-    ASSERT_FALSE(application.graph().hasEdge(0, target));
+    ASSERT_FALSE(application.graph().containsEdge(0, target));
     auto result = application.addEdge(0, target);
     ASSERT_FALSE(result);
     EXPECT_EQ(result.error().code, GraphErrorCode::LimitExceeded);
     EXPECT_EQ(application.graph().edgeCount(), ApplicationLimits::maxEdges);
-    EXPECT_FALSE(application.graph().hasEdge(0, target));
-    EXPECT_FALSE(application.graph().hasEdge(target, 0));
+    EXPECT_FALSE(application.graph().containsEdge(0, target));
+    EXPECT_FALSE(application.graph().containsEdge(target, 0));
     EXPECT_TRUE(application.coloring());
 }
 
@@ -229,28 +230,28 @@ TEST_F(FilesTest, ApplicationPreservesStateOnFailuresAndInvalidatesColoringOnEdi
 
 TEST_F(FilesTest, ComparisonAndCsvAndFailedComparisonPreserveResults) {
     const auto algorithmCount = std::size(coloringAlgorithmCatalog<Graph>);
-    constexpr std::size_t sizeCount = 4;
-    const auto rowCount = algorithmCount * sizeCount;
+    constexpr std::size_t seriesPointCount = 4;
+    const auto rowCount = algorithmCount * seriesPointCount;
     GraphApplication application;
     ASSERT_TRUE(application.generate({8, Topology::Cycle, 0, 42}));
     ASSERT_TRUE(application.compareAlgorithms(3));
-    ASSERT_EQ(application.measurements().size(), algorithmCount);
+    ASSERT_EQ(application.benchmarkResults().size(), algorithmCount);
     for (std::size_t i = 0; i < algorithmCount; ++i) {
-        const auto& row = application.measurements()[i];
+        const auto& row = application.benchmarkResults()[i];
         EXPECT_EQ(row.vertexCount, 8);
         EXPECT_EQ(row.edgeCount, 8);
         EXPECT_EQ(row.colorCount, 2);
         EXPECT_GE(row.medianMicroseconds, 0);
     }
     EXPECT_FALSE(application.compareAlgorithms(0));
-    EXPECT_EQ(application.measurements().size(), algorithmCount);
-    ASSERT_TRUE(application.compareSizeSeries({20, Topology::Path, 0, 42}, sizeCount, 2));
+    EXPECT_EQ(application.benchmarkResults().size(), algorithmCount);
+    ASSERT_TRUE(application.compareSizeSeries({20, Topology::Path, 0, 42}, seriesPointCount, 2));
     EXPECT_EQ(application.graph().vertexCount(), 8);
-    ASSERT_EQ(application.measurements().size(), rowCount);
-    EXPECT_EQ(application.measurements()[0].vertexCount, 5);
-    EXPECT_EQ(application.measurements()[rowCount - 1].vertexCount, 20);
-    EXPECT_EQ(application.measurements()[rowCount - 1].seed, 42);
-    ASSERT_TRUE(exportBenchmark(application.measurements(), folder / "results.csv"));
+    ASSERT_EQ(application.benchmarkResults().size(), rowCount);
+    EXPECT_EQ(application.benchmarkResults()[0].vertexCount, 5);
+    EXPECT_EQ(application.benchmarkResults()[rowCount - 1].vertexCount, 20);
+    EXPECT_EQ(application.benchmarkResults()[rowCount - 1].seed, 42);
+    ASSERT_TRUE(exportBenchmark(application.benchmarkResults(), folder / "results.csv"));
     std::ifstream input(folder / "results.csv");
     std::string line;
     std::getline(input, line);
@@ -265,19 +266,19 @@ TEST_F(FilesTest, ComparisonAndCsvAndFailedComparisonPreserveResults) {
     EXPECT_EQ(lines, rowCount);
     EXPECT_FALSE(application.compareSizeSeries({20, Topology::Cycle, 0, 1}, 20, 3));
     EXPECT_FALSE(application.compareSizeSeries({20, Topology::Path, 0, 1}, 0, 3));
-    EXPECT_EQ(application.measurements().size(), rowCount);
+    EXPECT_EQ(application.benchmarkResults().size(), rowCount);
     EXPECT_FALSE(application.compareAlgorithms(ApplicationLimits::maxRepetitionCount + 1));
     EXPECT_FALSE(application.compareSizeSeries({2000, Topology::Complete, 0, 1}, 1, 0));
     EXPECT_FALSE(application.compareSizeSeries({20, Topology::Path, 0, 1}, 4,
                                            ApplicationLimits::maxRepetitionCount + 1));
-    EXPECT_EQ(application.measurements().size(), rowCount);
-    ArraySequence<BenchmarkRow> empty;
+    EXPECT_EQ(application.benchmarkResults().size(), rowCount);
+    ArraySequence<BenchmarkResult> empty;
     EXPECT_TRUE(exportBenchmark(empty, folder / "empty.csv"));
 }
 
 TEST(Storage, GappedVertexAndEdgeIdsAndDeletedHighWaterMarksRoundTrip) {
     Graph graph;
-    for (int i = 0; i < 6; ++i) graph.addVertex({"label " + std::to_string(i)});
+    for (int i = 0; i < 6; ++i) ASSERT_TRUE(graph.addVertex({"label " + std::to_string(i)}));
     const auto a = *graph.addEdge(0, 2);
     const auto b = *graph.addEdge(2, 4);
     const auto c = *graph.addEdge(4, 5);
@@ -307,8 +308,8 @@ TEST(Storage, GappedVertexAndEdgeIdsAndDeletedHighWaterMarksRoundTrip) {
 
 TEST(Storage, PreservesEmptyClearedAndExhaustedIdentifierState) {
     Graph graph;
-    graph.addVertex({""});
-    graph.addVertex({""});
+    ASSERT_TRUE(graph.addVertex({""}));
+    ASSERT_TRUE(graph.addVertex({""}));
     ASSERT_TRUE(graph.addEdge(0, 1));
     graph.clear();
     std::stringstream text;
@@ -327,7 +328,9 @@ TEST(Storage, PreservesEmptyClearedAndExhaustedIdentifierState) {
     auto restored = readGraph(exhaustedText);
     ASSERT_TRUE(restored);
     EXPECT_TRUE(restored->containsVertex(maximum));
-    EXPECT_THROW(restored->addVertex({""}), std::overflow_error);
+    auto rejected = restored->addVertex({""});
+    ASSERT_FALSE(rejected);
+    EXPECT_EQ(rejected.error().code, GraphErrorCode::IdentifierExhausted);
     EXPECT_TRUE(restored->edgeIdCounter().exhausted);
 }
 
@@ -372,4 +375,93 @@ TEST_F(FilesTest, ApplicationRemovesVertexInvalidatesOnlyOnSuccessAndSavesGaps) 
     EXPECT_EQ(*app.addVertex("new"), 6);
     app.clear();
     EXPECT_EQ(*app.addVertex("after clear"), 7);
+}
+
+TEST_F(FilesTest, ExhaustedVertexIdentifiersReturnAnErrorWithoutChangingApplicationState) {
+    constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+    Graph graph;
+    ASSERT_TRUE(graph.addVertexWithId(maximum - 1, {"first"}));
+    ASSERT_TRUE(graph.addVertex({"last"}));
+    ASSERT_TRUE(graph.addEdge(maximum - 1, maximum));
+    const auto path = folder / "exhausted.graph";
+    ASSERT_TRUE(saveGraph(graph, path));
+
+    GraphApplication application;
+    ASSERT_TRUE(application.open(path));
+    ASSERT_TRUE(application.computeColoring(ColoringAlgorithm::Sequential));
+    auto added = application.addVertex("cannot be added");
+    ASSERT_FALSE(added);
+    EXPECT_EQ(added.error().code, GraphErrorCode::IdentifierExhausted);
+    EXPECT_EQ(application.graph().vertexCount(), 2);
+    EXPECT_EQ(application.graph().edgeCount(), 1);
+    EXPECT_EQ(application.graph().vertexIdCounter().nextId, maximum);
+    EXPECT_TRUE(application.graph().vertexIdCounter().exhausted);
+    EXPECT_FALSE(application.isModified());
+    EXPECT_TRUE(application.coloring());
+}
+
+TEST_F(FilesTest, VertexDataReplacementPreservesConnectionsAndChecksLabelsBeforeChangingState) {
+    GraphApplication application;
+    ASSERT_TRUE(application.generate({4, Topology::Cycle, 0, 1}));
+    const auto path = folder / "labels.graph";
+    ASSERT_TRUE(application.save(path));
+    ASSERT_TRUE(application.computeColoring(ColoringAlgorithm::Sequential));
+
+    auto missing = application.setVertexData(99, "missing");
+    ASSERT_FALSE(missing);
+    EXPECT_EQ(missing.error().code, GraphErrorCode::InvalidVertex);
+    auto invalid = application.setVertexData(2, "two\nlines");
+    ASSERT_FALSE(invalid);
+    EXPECT_EQ(invalid.error().code, GraphErrorCode::InvalidParameters);
+    EXPECT_FALSE(application.isModified());
+    EXPECT_TRUE(application.coloring());
+    EXPECT_EQ(application.graph().vertex(2)->get().data.label, "2");
+
+    ASSERT_TRUE(application.setVertexData(2, "new label"));
+    EXPECT_EQ(application.graph().vertex(2)->get().data.label, "new label");
+    EXPECT_EQ(application.graph().vertexCount(), 4);
+    EXPECT_EQ(application.graph().edgeCount(), 4);
+    EXPECT_TRUE(application.graph().containsEdge(1, 2));
+    EXPECT_TRUE(application.graph().containsEdge(2, 3));
+    EXPECT_TRUE(application.isModified());
+    EXPECT_FALSE(application.coloring());
+    ASSERT_TRUE(application.save(path));
+    ASSERT_TRUE(application.open(path));
+    EXPECT_EQ(application.graph().vertex(2)->get().data.label, "new label");
+}
+
+TEST_F(FilesTest, CsvEscapesCommasQuotesAndLineBreaksInTextFields) {
+    struct TextCase {
+        std::string_view value;
+        std::string_view encoded;
+    };
+    constexpr TextCase cases[] = {
+        {"Path", "Path"},
+        {"Custom, topology", "\"Custom, topology\""},
+        {"A \"quoted\" name", "\"A \"\"quoted\"\" name\""},
+        {"first\nsecond", "\"first\nsecond\""},
+        {"first\rsecond", "\"first\rsecond\""},
+        {"comma, \"quote\"\r\nnext", "\"comma, \"\"quote\"\"\r\nnext\""}};
+    for (const auto& text : cases) {
+        SCOPED_TRACE(text.value);
+        BenchmarkResult row;
+        row.vertexCount = 3;
+        row.edgeCount = 2;
+        row.medianMicroseconds = 1.5;
+        row.colorCount = 2;
+        row.repetitionCount = 1;
+        row.topology = text.value;
+        row.seed = 42;
+        row.edgeProbability = 0.5;
+        const ArraySequence<BenchmarkResult> rows{row};
+        const auto path = folder / "escaped.csv";
+        ASSERT_TRUE(exportBenchmark(rows, path));
+        std::ifstream input(path);
+        const std::string contents{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+        EXPECT_EQ(contents,
+                  "Vertices,Edges,Algorithm,MedianMicroseconds,Colors,Repetitions,Verified,"
+                  "Topology,Seed,Probability\n3,2,Sequential greedy,1.5,2,1,true," +
+                      std::string(text.encoded) + ",42,0.5\n");
+        expectNoTemporaryDirectories();
+    }
 }

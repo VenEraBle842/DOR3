@@ -5,10 +5,10 @@
 
 namespace BenchmarkDefaults {
 inline constexpr std::size_t repetitionCount = 7;
-inline constexpr std::size_t sizeCount = 4;
+inline constexpr std::size_t seriesPointCount = 4;
 }
 
-struct BenchmarkRow {
+struct BenchmarkResult {
     std::size_t vertexCount = 0;
     std::size_t edgeCount = 0;
     ColoringAlgorithm algorithm = ColoringAlgorithm::Sequential;
@@ -20,11 +20,11 @@ struct BenchmarkRow {
     double edgeProbability = 0;
 };
 
-Result<ArraySequence<BenchmarkRow>> compareAlgorithms(
+Result<ArraySequence<BenchmarkResult>> compareAlgorithms(
     const Graph& graph, std::size_t repetitionCount = BenchmarkDefaults::repetitionCount);
-Result<ArraySequence<BenchmarkRow>> compareSizeSeries(
+Result<ArraySequence<BenchmarkResult>> compareSizeSeries(
     const GenerationParameters& parameters,
-    std::size_t sizeCount = BenchmarkDefaults::sizeCount,
+    std::size_t seriesPointCount = BenchmarkDefaults::seriesPointCount,
     std::size_t repetitionCount = BenchmarkDefaults::repetitionCount);
-Result<void> exportBenchmark(const ArraySequence<BenchmarkRow>& rows,
+Result<void> exportBenchmark(const ArraySequence<BenchmarkResult>& rows,
                              const std::filesystem::path& path);

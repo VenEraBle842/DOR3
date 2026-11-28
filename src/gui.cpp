@@ -219,8 +219,8 @@ class GraphCanvas final : public wxPanel {
         dc.SetPen(wxPen(wxColour(175, 184, 198), 1));
         for (const auto id : graph.edgeIds()) {
             const auto& edge = graph.edge(id)->get();
-            const auto first = *coloringVertexPosition(ids, edge.first);
-            const auto second = *coloringVertexPosition(ids, edge.second);
+            const auto first = *findVertexPositionById(ids, edge.firstVertexId);
+            const auto second = *findVertexPositionById(ids, edge.secondVertexId);
             dc.DrawLine(positions[first].x, positions[first].y, positions[second].x, positions[second].y);
         }
         for (std::size_t i = 0; i < count; ++i) {
@@ -286,7 +286,7 @@ class VertexTable final : public wxListCtrl {
                 if (i) {
                     list += ", ";
                 }
-                list += wxString::Format("%zu", neighbors[i].neighbor);
+                list += wxString::Format("%zu", neighbors[i].neighborId);
             }
             return list;
         }
@@ -320,7 +320,7 @@ public:
         if (application_.coloring()) {
             const auto& processingOrder = application_.coloring()->processingOrder;
             for (std::size_t i = 0; i < count; ++i) {
-                processingSteps_[*coloringVertexPosition(vertexIds_, processingOrder[i])] = i;
+                processingSteps_[*findVertexPositionById(vertexIds_, processingOrder[i])] = i;
             }
         }
         SetItemCount(static_cast<long>(count));
@@ -341,9 +341,9 @@ class MainFrame final : public wxFrame {
     wxWeakRef<GraphCanvas> canvas_;
     wxWeakRef<VertexTable> vertexTable_;
     wxWeakRef<wxStaticText> summary_;
-    wxWeakRef<wxTextCtrl> vertexLabel_, edgeFirst_, edgeSecond_;
+    wxWeakRef<wxTextCtrl> vertexLabel_, firstVertexIdInput_, secondVertexIdInput_;
     wxWeakRef<wxChoice> algorithm_;
-    wxWeakRef<wxSpinCtrl> repetitionCount_, sizeCount_;
+    wxWeakRef<wxSpinCtrl> repetitionCount_, seriesPointCount_;
     wxWeakRef<wxListCtrl> benchmarkTable_;
     GenerationControls generationControls_, seriesGenerationControls_;
     std::jthread worker_;
@@ -382,7 +382,7 @@ class MainFrame final : public wxFrame {
         }
         summary_->SetLabel(summary);
         benchmarkTable_->DeleteAllItems();
-        const auto& rows = application_.measurements();
+        const auto& rows = application_.benchmarkResults();
         for (std::size_t i = 0; i < rows.size(); ++i) {
             const auto& row = rows[i];
             const auto index = benchmarkTable_->InsertItem(static_cast<long>(i), wxEmptyString);
@@ -391,7 +391,7 @@ class MainFrame final : public wxFrame {
             benchmarkTable_->SetItem(index, ComparisonColumn::Edges,
                                    wxString::Format("%zu", row.edgeCount));
             benchmarkTable_->SetItem(index, ComparisonColumn::Algorithm,
-                                   convertToWxString(algorithmName(row.algorithm)));
+                                   convertToWxString(coloringAlgorithmName(row.algorithm)));
             benchmarkTable_->SetItem(index, ComparisonColumn::MedianTime,
                                    wxString::Format("%.3f", row.medianMicroseconds));
             benchmarkTable_->SetItem(index, ComparisonColumn::Colors,
@@ -519,8 +519,8 @@ class MainFrame final : public wxFrame {
     }
 
     void changeEdge(bool remove) {
-        auto first = parseNumber<VertexId>(edgeFirst_->GetValue(), "first vertex");
-        auto second = parseNumber<VertexId>(edgeSecond_->GetValue(), "second vertex");
+        auto first = parseNumber<VertexId>(firstVertexIdInput_->GetValue(), "first vertex");
+        auto second = parseNumber<VertexId>(secondVertexIdInput_->GetValue(), "second vertex");
         if (!first) {
             showError(first.error());
             return;
@@ -545,7 +545,8 @@ class MainFrame final : public wxFrame {
         addLabel(*graphPanel_, *tools, "Manual editing");
         vertexLabel_ = createControl<wxTextCtrl>(*graphPanel_, wxID_ANY, "Vertex");
         tools->Add(vertexLabel_.get(), 0, wxEXPAND | wxTOP | wxBOTTOM, 6);
-        addButton(*graphPanel_, *tools, "Add vertex", [this] {
+        auto vertexActions = std::make_unique<wxBoxSizer>(wxHORIZONTAL);
+        addButton(*graphPanel_, *vertexActions, "Add vertex", [this] {
             auto result = application_.addVertex(convertToUtf8(vertexLabel_->GetValue()));
             if (!result) {
                 showError(result.error());
@@ -553,14 +554,28 @@ class MainFrame final : public wxFrame {
                 refresh();
             }
         });
-        addLabel(*graphPanel_, *tools, "Vertex IDs (remove uses the first)");
+        addButton(*graphPanel_, *vertexActions, "Set vertex label", [this] {
+            auto id = parseNumber<VertexId>(firstVertexIdInput_->GetValue(), "vertex ID");
+            if (!id) {
+                showError(id.error());
+                return;
+            }
+            auto result = application_.setVertexData(*id, convertToUtf8(vertexLabel_->GetValue()));
+            if (!result) {
+                showError(result.error());
+            } else {
+                refresh();
+            }
+        });
+        addSizer(*tools, std::move(vertexActions));
+        addLabel(*graphPanel_, *tools, "Vertex actions use the first ID");
         auto edge = std::make_unique<wxBoxSizer>(wxHORIZONTAL);
-        edgeFirst_ =
+        firstVertexIdInput_ =
             createControl<wxTextCtrl>(*graphPanel_, wxID_ANY, "0", wxDefaultPosition, wxSize(90, -1));
-        edgeSecond_ =
+        secondVertexIdInput_ =
             createControl<wxTextCtrl>(*graphPanel_, wxID_ANY, "1", wxDefaultPosition, wxSize(90, -1));
-        edge->Add(edgeFirst_.get(), 1, wxRIGHT, 6);
-        edge->Add(edgeSecond_.get(), 1);
+        edge->Add(firstVertexIdInput_.get(), 1, wxRIGHT, 6);
+        edge->Add(secondVertexIdInput_.get(), 1);
         addSizer(*tools, std::move(edge), 0, wxEXPAND | wxBOTTOM, 6);
         addButton(*graphPanel_, *tools, "Add edge", [this] {
             changeEdge(false);
@@ -569,7 +584,7 @@ class MainFrame final : public wxFrame {
             changeEdge(true);
         });
         addButton(*graphPanel_, *tools, "Remove vertex", [this] {
-            auto id = parseNumber<VertexId>(edgeFirst_->GetValue(), "vertex ID");
+            auto id = parseNumber<VertexId>(firstVertexIdInput_->GetValue(), "vertex ID");
             if (!id) {
                 showError(id.error());
                 return;
@@ -666,21 +681,21 @@ class MainFrame final : public wxFrame {
         tools->AddSpacer(8);
         seriesGenerationControls_.create(*comparisonPanel_, *tools);
         addLabel(*comparisonPanel_, *tools, "Number of sizes");
-        sizeCount_ = createControl<wxSpinCtrl>(*comparisonPanel_, wxID_ANY);
-        sizeCount_->SetRange(1, static_cast<int>(ApplicationLimits::maxSeriesSizeCount));
-        sizeCount_->SetValue(static_cast<int>(BenchmarkDefaults::sizeCount));
-        tools->Add(sizeCount_.get(), 0, wxEXPAND | wxTOP | wxBOTTOM, 6);
+        seriesPointCount_ = createControl<wxSpinCtrl>(*comparisonPanel_, wxID_ANY);
+        seriesPointCount_->SetRange(1, static_cast<int>(ApplicationLimits::maxSeriesPointCount));
+        seriesPointCount_->SetValue(static_cast<int>(BenchmarkDefaults::seriesPointCount));
+        tools->Add(seriesPointCount_.get(), 0, wxEXPAND | wxTOP | wxBOTTOM, 6);
         addButton(*comparisonPanel_, *tools, "Compare size series", [this] {
             auto parameters = seriesGenerationControls_.read();
             if (!parameters) {
                 showError(parameters.error());
                 return;
             }
-            const auto sizeCount = static_cast<std::size_t>(sizeCount_->GetValue());
+            const auto seriesPointCount = static_cast<std::size_t>(seriesPointCount_->GetValue());
             const auto repetitionCount = static_cast<std::size_t>(repetitionCount_->GetValue());
             runBackgroundTask(
-                [this, parameters = *parameters, sizeCount, repetitionCount] {
-                    return application_.compareSizeSeries(parameters, sizeCount, repetitionCount);
+                [this, parameters = *parameters, seriesPointCount, repetitionCount] {
+                    return application_.compareSizeSeries(parameters, seriesPointCount, repetitionCount);
                 },
                 true);
         });
@@ -695,7 +710,7 @@ class MainFrame final : public wxFrame {
                 return;
             }
             const auto result =
-                exportBenchmark(application_.measurements(), convertToUtf8(dialog.GetPath()));
+                exportBenchmark(application_.benchmarkResults(), convertToUtf8(dialog.GetPath()));
             if (!result) {
                 showError(result.error());
             } else {

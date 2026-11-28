@@ -8,7 +8,7 @@ inline constexpr std::size_t maxVertices = 100'000;
 inline constexpr std::size_t maxEdges = 2'000'000;
 inline constexpr std::size_t maxGeneratedVertices = 2000;
 inline constexpr std::size_t maxRepetitionCount = 101;
-inline constexpr std::size_t maxSeriesSizeCount = 20;
+inline constexpr std::size_t maxSeriesPointCount = 20;
 }
 
 inline Result<void> validateGraphLimits(std::size_t vertexCount, std::size_t edgeCount) {

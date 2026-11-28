@@ -6,6 +6,20 @@
 #include <locale>
 #include <ostream>
 #include <storage.hpp>
+#include <string_view>
+
+static void writeCsvField(std::ostream& output, std::string_view value) {
+    if (value.find_first_of(",\"\r\n") == std::string_view::npos) {
+        output << value;
+        return;
+    }
+    output << '"';
+    for (const auto character : value) {
+        if (character == '"') output << '"';
+        output << character;
+    }
+    output << '"';
+}
 
 static Result<void> validateRepetitionCount(std::size_t repetitionCount) {
     if (repetitionCount == 0 || repetitionCount > ApplicationLimits::maxRepetitionCount) {
@@ -16,12 +30,12 @@ static Result<void> validateRepetitionCount(std::size_t repetitionCount) {
     return {};
 }
 
-Result<ArraySequence<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::size_t repetitionCount) {
+Result<ArraySequence<BenchmarkResult>> compareAlgorithms(const Graph& graph, std::size_t repetitionCount) {
     auto repetitionValidation = validateRepetitionCount(repetitionCount);
     if (!repetitionValidation) {
         return std::unexpected(repetitionValidation.error());
     }
-    ArraySequence<BenchmarkRow> rows;
+    ArraySequence<BenchmarkResult> rows;
     for (const auto& algorithm : coloringAlgorithmCatalog<Graph>) {
         auto warmup = algorithm.colorGraph(graph);
         if (!warmup) {
@@ -64,9 +78,9 @@ Result<ArraySequence<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::s
     return rows;
 }
 
-Result<ArraySequence<BenchmarkRow>>
+Result<ArraySequence<BenchmarkResult>>
 compareSizeSeries(const GenerationParameters& parameters,
-                  std::size_t sizeCount,
+                  std::size_t seriesPointCount,
                   std::size_t repetitionCount) {
     auto repetitionValidation = validateRepetitionCount(repetitionCount);
     if (!repetitionValidation) {
@@ -76,23 +90,23 @@ compareSizeSeries(const GenerationParameters& parameters,
     if (!validParameters) {
         return std::unexpected(validParameters.error());
     }
-    if (sizeCount == 0 || sizeCount > ApplicationLimits::maxSeriesSizeCount ||
-        parameters.vertexCount < sizeCount) {
+    if (seriesPointCount == 0 || seriesPointCount > ApplicationLimits::maxSeriesPointCount ||
+        parameters.vertexCount < seriesPointCount) {
         return failure(GraphErrorCode::InvalidParameters,
-                       "Use 1.." + std::to_string(ApplicationLimits::maxSeriesSizeCount) +
+                       "Use 1.." + std::to_string(ApplicationLimits::maxSeriesPointCount) +
                            " points and a maximum size between points and " +
                            std::to_string(ApplicationLimits::maxGeneratedVertices) + ".");
     }
     auto firstParameters = parameters;
-    firstParameters.vertexCount = parameters.vertexCount / sizeCount;
+    firstParameters.vertexCount = parameters.vertexCount / seriesPointCount;
     auto firstValidation = validateGenerationParameters(firstParameters);
     if (!firstValidation) {
         return std::unexpected(firstValidation.error());
     }
-    ArraySequence<BenchmarkRow> rows;
-    for (std::size_t point = 1; point <= sizeCount; ++point) {
+    ArraySequence<BenchmarkResult> rows;
+    for (std::size_t point = 1; point <= seriesPointCount; ++point) {
         auto current = parameters;
-        current.vertexCount = parameters.vertexCount * point / sizeCount;
+        current.vertexCount = parameters.vertexCount * point / seriesPointCount;
         auto graph = generateGraph(current);
         if (!graph) {
             return std::unexpected(graph.error());
@@ -113,7 +127,7 @@ compareSizeSeries(const GenerationParameters& parameters,
     return rows;
 }
 
-Result<void> exportBenchmark(const ArraySequence<BenchmarkRow>& rows,
+Result<void> exportBenchmark(const ArraySequence<BenchmarkResult>& rows,
                              const std::filesystem::path& path) {
     return writeFile(path, [&](std::ostream& output) -> Result<void> {
         output.imbue(std::locale::classic());
@@ -123,9 +137,12 @@ Result<void> exportBenchmark(const ArraySequence<BenchmarkRow>& rows,
         // Результаты сравнения публикуются только после независимой проверки
         for (std::size_t i = 0; i < rows.size(); ++i) {
             const auto& row = rows[i];
-            output << row.vertexCount << ',' << row.edgeCount << ',' << algorithmName(row.algorithm) << ','
-                   << row.medianMicroseconds << ',' << row.colorCount << ',' << row.repetitionCount << ','
-                   << "true," << row.topology << ',' << row.seed << ',' << row.edgeProbability << '\n';
+            output << row.vertexCount << ',' << row.edgeCount << ',';
+            writeCsvField(output, coloringAlgorithmName(row.algorithm));
+            output << ',' << row.medianMicroseconds << ',' << row.colorCount << ','
+                   << row.repetitionCount << ",true,";
+            writeCsvField(output, row.topology);
+            output << ',' << row.seed << ',' << row.edgeProbability << '\n';
         }
         if (!output) {
             return failure(GraphErrorCode::FileWrite);

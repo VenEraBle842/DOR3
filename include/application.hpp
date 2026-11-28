@@ -5,7 +5,7 @@
 class GraphApplication {
     Graph graph_;
     std::optional<ColoringResult> coloring_;
-    ArraySequence<BenchmarkRow> measurements_;
+    ArraySequence<BenchmarkResult> benchmarkResults_;
     bool modified_ = false;
 
     void handleGraphChange() {
@@ -22,8 +22,8 @@ public:
         return coloring_;
     }
 
-    const ArraySequence<BenchmarkRow>& measurements() const noexcept {
-        return measurements_;
+    const ArraySequence<BenchmarkResult>& benchmarkResults() const noexcept {
+        return benchmarkResults_;
     }
 
     bool isModified() const noexcept {
@@ -36,6 +36,7 @@ public:
     }
 
     Result<VertexId> addVertex(std::string label);
+    Result<void> setVertexData(VertexId id, std::string label);
     Result<void> addEdge(VertexId first, VertexId second);
     Result<void> removeEdge(VertexId first, VertexId second);
     Result<void> removeVertex(VertexId id);
@@ -45,6 +46,6 @@ public:
     Result<void> computeColoring(ColoringAlgorithm algorithm);
     Result<void> compareAlgorithms(std::size_t repetitionCount);
     Result<void> compareSizeSeries(const GenerationParameters& parameters,
-                                   std::size_t sizeCount,
+                                   std::size_t seriesPointCount,
                                    std::size_t repetitionCount);
 };

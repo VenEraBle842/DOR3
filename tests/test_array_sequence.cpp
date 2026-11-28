@@ -19,25 +19,6 @@ void expectContainerError(const ContainerResult<T>& result, ContainerErrorCode c
     EXPECT_EQ(result.error().code, code);
 }
 
-struct ThrowingValue {
-    inline static int copiesLeft = -1;
-    inline static bool failDefault = false;
-    int value = 0;
-    ThrowingValue() { if (failDefault) throw std::runtime_error("default"); }
-    explicit ThrowingValue(int number) : value(number) {}
-    ThrowingValue(const ThrowingValue& other) { *this = other; }
-    ThrowingValue& operator=(const ThrowingValue& other) {
-        if (copiesLeft == 0) throw std::runtime_error("copy");
-        if (copiesLeft > 0) --copiesLeft;
-        value = other.value;
-        return *this;
-    }
-    ThrowingValue(ThrowingValue&& other) noexcept(false) : value(other.value) {}
-    ThrowingValue& operator=(ThrowingValue&& other) noexcept(false) {
-        value = other.value;
-        return *this;
-    }
-};
 }
 
 TEST(DynamicArray, SizeIsAccessibleInitializedStorageAndResizePreservesPrefix) {

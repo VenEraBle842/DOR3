@@ -11,8 +11,17 @@ Result<VertexId> GraphApplication::addVertex(std::string label) {
         return std::unexpected(sizeValidation.error());
     }
     auto id = graph_.addVertex({std::move(label)});
-    handleGraphChange();
+    if (id) handleGraphChange();
     return id;
+}
+
+Result<void> GraphApplication::setVertexData(VertexId id, std::string label) {
+    if (label.find_first_of("\r\n") != std::string::npos) {
+        return failure(GraphErrorCode::InvalidParameters, "Vertex labels must occupy one line.");
+    }
+    auto result = graph_.setVertexData(id, {std::move(label)});
+    if (result) handleGraphChange();
+    return result;
 }
 
 Result<void> GraphApplication::addEdge(VertexId first, VertexId second) {
@@ -89,17 +98,17 @@ Result<void> GraphApplication::compareAlgorithms(std::size_t repetitionCount) {
     if (!result) {
         return std::unexpected(result.error());
     }
-    measurements_ = std::move(*result);
+    benchmarkResults_ = std::move(*result);
     return {};
 }
 
 Result<void> GraphApplication::compareSizeSeries(const GenerationParameters& parameters,
-                                                std::size_t sizeCount,
+                                                std::size_t seriesPointCount,
                                                 std::size_t repetitionCount) {
-    auto result = ::compareSizeSeries(parameters, sizeCount, repetitionCount);
+    auto result = ::compareSizeSeries(parameters, seriesPointCount, repetitionCount);
     if (!result) {
         return std::unexpected(result.error());
     }
-    measurements_ = std::move(*result);
+    benchmarkResults_ = std::move(*result);
     return {};
 }

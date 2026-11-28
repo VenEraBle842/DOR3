@@ -66,8 +66,8 @@ Result<Graph> readGraph(std::istream& input) {
     GraphIdCounter vertexCounter, edgeCounter;
     std::size_t vertexExhausted = 0, edgeExhausted = 0;
     if (!readUnsigned(counts, vertices) || !readUnsigned(counts, edges) ||
-        !readUnsigned(counts, vertexCounter.next) || !readUnsigned(counts, vertexExhausted) ||
-        !readUnsigned(counts, edgeCounter.next) || !readUnsigned(counts, edgeExhausted) ||
+        !readUnsigned(counts, vertexCounter.nextId) || !readUnsigned(counts, vertexExhausted) ||
+        !readUnsigned(counts, edgeCounter.nextId) || !readUnsigned(counts, edgeExhausted) ||
         vertexExhausted > 1 || edgeExhausted > 1 || !(counts >> std::ws).eof()) {
         return failure(GraphErrorCode::FileRead, "Invalid counts or identifier high-water marks.");
     }
@@ -138,8 +138,8 @@ Result<void> writeGraph(const Graph& graph, std::ostream& output) {
     const auto edgeCounter = graph.edgeIdCounter();
     output << std::dec << std::noboolalpha << std::noshowpos << std::noshowbase;
     output << graphFileHeader << '\n' << graph.vertexCount() << ' ' << graph.edgeCount() << ' '
-           << vertexCounter.next << ' ' << vertexCounter.exhausted << ' '
-           << edgeCounter.next << ' ' << edgeCounter.exhausted << '\n';
+           << vertexCounter.nextId << ' ' << vertexCounter.exhausted << ' '
+           << edgeCounter.nextId << ' ' << edgeCounter.exhausted << '\n';
     for (const auto id : graph.vertexIds()) {
         const auto& label = graph.vertex(id)->get().data.label;
         if (label.find_first_of("\r\n") != std::string::npos) {
@@ -149,7 +149,7 @@ Result<void> writeGraph(const Graph& graph, std::ostream& output) {
     }
     for (const auto id : graph.edgeIds()) {
         const auto& edge = graph.edge(id)->get();
-        output << id << ' ' << edge.first << ' ' << edge.second << '\n';
+        output << id << ' ' << edge.firstVertexId << ' ' << edge.secondVertexId << '\n';
     }
     if (!output) {
         return failure(GraphErrorCode::FileWrite);

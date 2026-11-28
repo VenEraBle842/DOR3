@@ -14,7 +14,7 @@ enum class ColoringAlgorithm {
     Count
 };
 
-inline std::optional<std::size_t> coloringVertexPosition(const ArraySequence<VertexId>& ids, VertexId id) {
+inline std::optional<std::size_t> findVertexPositionById(const ArraySequence<VertexId>& ids, VertexId id) {
     std::size_t first = 0, last = ids.size();
     while (first < last) {
         const auto middle = first + (last - first) / 2;
@@ -36,7 +36,7 @@ struct ColoringResult {
     std::size_t colorCount = 0;
 
     Result<std::size_t> color(VertexId id) const {
-        auto position = coloringVertexPosition(vertexIds, id);
+        auto position = findVertexPositionById(vertexIds, id);
         if (!position || *position >= colors.size()) {
             return failure(GraphErrorCode::InvalidVertex);
         }
@@ -61,7 +61,7 @@ Result<ColoringResult> colorGraphGreedily(const TGraph& graph, ArraySequence<Ver
     result.vertexIds = graph.vertexIds();
     ArraySequence<bool> seenVertices(count, false);
     for (const auto id : processingOrder) {
-        auto position = coloringVertexPosition(result.vertexIds, id);
+        auto position = findVertexPositionById(result.vertexIds, id);
         if (!position || seenVertices[*position]) {
             return failure(GraphErrorCode::InvalidParameters, "Order must contain every vertex once.");
         }
@@ -75,7 +75,7 @@ Result<ColoringResult> colorGraphGreedily(const TGraph& graph, ArraySequence<Ver
         const auto vertex = result.processingOrder[step];
         const auto& neighbors = graph.neighbors(vertex)->get();
         for (const auto& neighbor : neighbors) {
-            const auto color = result.colors[*coloringVertexPosition(result.vertexIds, neighbor.neighbor)];
+            const auto color = result.colors[*findVertexPositionById(result.vertexIds, neighbor.neighborId)];
             if (color != uncolored) {
                 marks[color] = step;
             }
@@ -84,7 +84,7 @@ Result<ColoringResult> colorGraphGreedily(const TGraph& graph, ArraySequence<Ver
         while (color < count && marks[color] == step) {
             ++color;
         }
-        result.colors[*coloringVertexPosition(result.vertexIds, vertex)] = color;
+        result.colors[*findVertexPositionById(result.vertexIds, vertex)] = color;
         if (color + 1 > result.colorCount) {
             result.colorCount = color + 1;
         }
@@ -99,21 +99,21 @@ Result<ColoringResult> colorGraphSequentially(const TGraph& graph) {
 
 template <ColorableGraph TGraph>
 Result<ColoringResult> colorGraphByDescendingDegree(const TGraph& graph) {
-    struct VertexDegree { VertexId vertex; std::size_t degree; };
+    struct VertexDegree { VertexId vertexId; std::size_t degree; };
     ArraySequence<VertexDegree> degrees;
     auto degreesReserved = degrees.reserve(graph.vertexCount());
     if (!degreesReserved) return failure(degreesReserved.error());
-    // Appends below fit the buffers reserved for vertexCount() elements.
+    // Все добавления ниже помещаются в заранее зарезервированный буфер.
     for (const auto id : graph.vertexIds())
         degrees.push_back({id, graph.neighbors(id)->get().size()}).value();
     heapSort(degrees, [](const VertexDegree& first, const VertexDegree& second) {
-        return first.degree != second.degree ? first.degree > second.degree : first.vertex < second.vertex;
+        return first.degree != second.degree ? first.degree > second.degree : first.vertexId < second.vertexId;
     });
     ArraySequence<VertexId> order;
     auto orderReserved = order.reserve(graph.vertexCount());
     if (!orderReserved) return failure(orderReserved.error());
     for (const auto& entry : degrees) {
-        order.push_back(entry.vertex).value();
+        order.push_back(entry.vertexId).value();
     }
     return colorGraphGreedily(graph, std::move(order));
 }
@@ -144,7 +144,7 @@ Result<ColoringResult> colorGraph(const TGraph& graph, ColoringAlgorithm algorit
     return failure(GraphErrorCode::InvalidParameters, "Unknown coloring algorithm.");
 }
 
-inline std::string_view algorithmName(ColoringAlgorithm algorithm) {
+inline std::string_view coloringAlgorithmName(ColoringAlgorithm algorithm) {
     for (const auto& entry : coloringAlgorithmCatalog<Graph>) {
         if (entry.id == algorithm) {
             return entry.displayName;
@@ -167,7 +167,7 @@ Result<void> validateColoring(const TGraph& graph, const ColoringResult& result)
         }
     }
     for (std::size_t i = 0; i < count; ++i) {
-        auto position = coloringVertexPosition(ids, result.processingOrder[i]);
+        auto position = findVertexPositionById(ids, result.processingOrder[i]);
         const auto color = result.colors[i];
         if (!position || seenVertices[*position] || color >= result.colorCount) {
             return failure(GraphErrorCode::InvalidColoring, "Invalid processing order or color.");
@@ -176,7 +176,7 @@ Result<void> validateColoring(const TGraph& graph, const ColoringResult& result)
         usedColors[color] = true;
         const auto& neighbors = graph.neighbors(ids[i])->get();
         for (const auto& neighbor : neighbors) {
-            auto target = coloringVertexPosition(ids, neighbor.neighbor);
+            auto target = findVertexPositionById(ids, neighbor.neighborId);
             if (!target || color == result.colors[*target]) {
                 return failure(GraphErrorCode::InvalidColoring, "Adjacent vertices have the same color.");
             }
