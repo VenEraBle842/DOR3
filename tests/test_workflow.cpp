@@ -39,8 +39,8 @@ TEST(Storage, RoundTripQuotedLabelsAndEdges) {
     ASSERT_TRUE(writeGraph(graph, text));
     auto loaded = readGraph(text);
     ASSERT_TRUE(loaded);
-    EXPECT_EQ(loaded->vertex(0)->get().label, graph.vertex(0)->get().label);
-    EXPECT_EQ(loaded->vertex(1)->get().label, "");
+    EXPECT_EQ(loaded->vertex(0)->get().data.label, graph.vertex(0)->get().data.label);
+    EXPECT_EQ(loaded->vertex(1)->get().data.label, "");
     EXPECT_EQ(loaded->edgeCount(), 1);
     EXPECT_TRUE(loaded->hasEdge(1, 0));
 }
@@ -105,7 +105,7 @@ TEST(Storage, SharedLimitsAcceptBoundariesAndRejectOversizedHeaders) {
         std::istringstream input("DOR3_GRAPH 1\n" + line + "\n");
         auto result = readGraph(input);
         ASSERT_FALSE(result);
-        EXPECT_EQ(result.error().code, ErrorCode::FileRead);
+        EXPECT_EQ(result.error().code, GraphErrorCode::FileRead);
     }
 }
 
@@ -117,7 +117,7 @@ TEST_F(FilesTest, FailedWriteKeepsExistingTarget) {
     }
     auto result = writeFile(path, [](std::ostream& output) -> Result<void> {
         output << "partial";
-        return failure(ErrorCode::FileWrite);
+        return failure(GraphErrorCode::FileWrite);
     });
     EXPECT_FALSE(result);
     std::ifstream input(path);
@@ -152,7 +152,7 @@ TEST_F(FilesTest, OversizedGraphCannotBeWrittenOrReplaceExistingFile) {
     std::ostringstream output;
     auto result = writeGraph(graph, output);
     ASSERT_FALSE(result);
-    EXPECT_EQ(result.error().code, ErrorCode::LimitExceeded);
+    EXPECT_EQ(result.error().code, GraphErrorCode::LimitExceeded);
     EXPECT_TRUE(output.str().empty());
 
     const auto path = folder / "graph.data";
@@ -174,7 +174,7 @@ TEST_F(FilesTest, ApplicationVertexLimitPreservesSavedGraphAndColoring) {
     ASSERT_TRUE(application.computeColoring(ColoringAlgorithm::Sequential));
     auto result = application.addVertex("too many");
     ASSERT_FALSE(result);
-    EXPECT_EQ(result.error().code, ErrorCode::LimitExceeded);
+    EXPECT_EQ(result.error().code, GraphErrorCode::LimitExceeded);
     EXPECT_EQ(application.graph().vertexCount(), ApplicationLimits::maxVertices);
     EXPECT_FALSE(application.isModified());
     EXPECT_TRUE(application.coloring());
@@ -187,7 +187,7 @@ TEST(GraphApplication, EdgeLimitRejectsNewEdgeWithoutInvalidatingColoring) {
     for (std::size_t i = 0; i < ApplicationLimits::maxVertices; ++i) {
         ASSERT_TRUE(application.addVertex(""));
     }
-    // Distribute edges across the graph to keep this boundary test sparse and fast.
+    // Рёбра распределены по вершинам, чтобы граничный тест оставался разреженным.
     constexpr auto neighborsPerVertex = ApplicationLimits::maxEdges / ApplicationLimits::maxVertices + 1;
     for (VertexId first = 0; first < ApplicationLimits::maxVertices &&
                              application.graph().edgeCount() < ApplicationLimits::maxEdges; ++first) {
@@ -203,7 +203,7 @@ TEST(GraphApplication, EdgeLimitRejectsNewEdgeWithoutInvalidatingColoring) {
     ASSERT_FALSE(application.graph().hasEdge(0, target));
     auto result = application.addEdge(0, target);
     ASSERT_FALSE(result);
-    EXPECT_EQ(result.error().code, ErrorCode::LimitExceeded);
+    EXPECT_EQ(result.error().code, GraphErrorCode::LimitExceeded);
     EXPECT_EQ(application.graph().edgeCount(), ApplicationLimits::maxEdges);
     EXPECT_FALSE(application.graph().hasEdge(0, target));
     EXPECT_FALSE(application.graph().hasEdge(target, 0));
@@ -284,4 +284,103 @@ TEST_F(FilesTest, ComparisonAndCsvAndFailedComparisonPreserveResults) {
     EXPECT_EQ(application.measurements().size(), rowCount);
     DynamicArray<BenchmarkRow> empty;
     EXPECT_TRUE(exportBenchmark(empty, folder / "empty.csv"));
+}
+
+TEST(Storage, GappedVertexAndEdgeIdsAndDeletedHighWaterMarksRoundTrip) {
+    Graph graph;
+    for (int i = 0; i < 6; ++i) graph.addVertex({"label " + std::to_string(i)});
+    const auto a = *graph.addEdge(0, 2);
+    const auto b = *graph.addEdge(2, 4);
+    const auto c = *graph.addEdge(4, 5);
+    ASSERT_TRUE(graph.removeVertex(1));
+    ASSERT_TRUE(graph.removeVertex(3));
+    ASSERT_TRUE(graph.removeEdge(a));
+    ASSERT_TRUE(graph.removeEdge(c));
+    ASSERT_TRUE(graph.removeVertex(5));
+    std::stringstream text;
+    ASSERT_TRUE(writeGraph(graph, text));
+    EXPECT_TRUE(text.str().starts_with("DOR3_GRAPH 2\n"));
+    auto loaded = readGraph(text);
+    ASSERT_TRUE(loaded);
+    ASSERT_EQ(loaded->vertexCount(), 3);
+    EXPECT_TRUE(loaded->containsVertex(0));
+    EXPECT_TRUE(loaded->containsVertex(2));
+    EXPECT_TRUE(loaded->containsVertex(4));
+    EXPECT_FALSE(loaded->containsVertex(1));
+    EXPECT_EQ(loaded->vertex(4)->get().data.label, "label 4");
+    EXPECT_EQ(*loaded->edgeId(4, 2), b);
+    EXPECT_EQ(loaded->addVertex({"new"}), 6);
+    EXPECT_GT(*loaded->addEdge(0, 6), c);
+    auto coloring = colorGraph(*loaded, ColoringAlgorithm::LargestDegreeFirst);
+    ASSERT_TRUE(coloring);
+    EXPECT_TRUE(validateColoring(*loaded, *coloring));
+}
+
+TEST(Storage, PreservesEmptyClearedAndExhaustedIdentifierState) {
+    Graph graph;
+    graph.addVertex({""});
+    graph.addVertex({""});
+    ASSERT_TRUE(graph.addEdge(0, 1));
+    graph.clear();
+    std::stringstream text;
+    ASSERT_TRUE(writeGraph(graph, text));
+    auto loaded = readGraph(text);
+    ASSERT_TRUE(loaded);
+    EXPECT_EQ(loaded->addVertex({""}), 2);
+    EXPECT_EQ(loaded->addVertex({""}), 3);
+    EXPECT_EQ(*loaded->addEdge(2, 3), 1);
+    Graph exhausted;
+    constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+    ASSERT_TRUE(exhausted.addVertexWithId(maximum, {"last"}));
+    ASSERT_TRUE(exhausted.advanceIdCounters({maximum, true}, {maximum, true}));
+    std::stringstream exhaustedText;
+    ASSERT_TRUE(writeGraph(exhausted, exhaustedText));
+    auto restored = readGraph(exhaustedText);
+    ASSERT_TRUE(restored);
+    EXPECT_TRUE(restored->containsVertex(maximum));
+    EXPECT_THROW(restored->addVertex({""}), std::overflow_error);
+    EXPECT_TRUE(restored->edgeIdCounter().exhausted);
+}
+
+TEST(Storage, VersionTwoRejectsInvalidIdsOrderingAndHighWaterMarks) {
+    for (const auto* file : {
+             "DOR3_GRAPH 2\n2 0 4 0 0 0\n2 \"a\"\n2 \"duplicate\"\n",
+             "DOR3_GRAPH 2\n2 0 4 0 0 0\n3 \"a\"\n2 \"unordered\"\n",
+             "DOR3_GRAPH 2\n1 0 2 0 0 0\n3 \"a\"\n",
+             "DOR3_GRAPH 2\n0 0 2 1 0 0\n",
+             "DOR3_GRAPH 2\n0 0 0 0 0 2\n",
+             "DOR3_GRAPH 2\n0 0 0 0 0 0 extra\n",
+             "DOR3_GRAPH 2\n1 0 4 0 0 0\n-1 \"a\"\n",
+             "DOR3_GRAPH 2\n1 0 4 0 0 0\n1 \"a\" extra\n",
+             "DOR3_GRAPH 2\n2 1 4 0 2 0\n1 \"a\"\n3 \"b\"\n2 1 3\n",
+             "DOR3_GRAPH 2\n3 2 5 0 9 0\n0 \"a\"\n2 \"b\"\n4 \"c\"\n8 0 2\n7 2 4\n",
+             "DOR3_GRAPH 2\n2 1 3 0 1 0\n0 \"a\"\n2 \"b\"\n0 0 1\n"}) {
+        std::istringstream input(file);
+        EXPECT_FALSE(readGraph(input)) << file;
+    }
+}
+
+TEST_F(FilesTest, ApplicationRemovesVertexInvalidatesOnlyOnSuccessAndSavesGaps) {
+    GraphApplication app;
+    ASSERT_TRUE(app.generate({6, Topology::Path, 0, 1}));
+    ASSERT_TRUE(app.computeColoring(ColoringAlgorithm::Sequential));
+    ASSERT_TRUE(app.save(folder / "before.graph"));
+    EXPECT_FALSE(app.removeVertex(99));
+    EXPECT_TRUE(app.coloring());
+    EXPECT_FALSE(app.isModified());
+    ASSERT_TRUE(app.removeVertex(2));
+    EXPECT_FALSE(app.coloring());
+    EXPECT_TRUE(app.isModified());
+    EXPECT_FALSE(app.graph().containsVertex(2));
+    EXPECT_EQ(app.graph().vertexCount(), 5);
+    EXPECT_EQ(app.graph().edgeCount(), 3);
+    ASSERT_TRUE(app.computeColoring(ColoringAlgorithm::LargestDegreeFirst));
+    EXPECT_TRUE(validateColoring(app.graph(), *app.coloring()));
+    ASSERT_TRUE(app.compareAlgorithms(1));
+    ASSERT_TRUE(app.save(folder / "gapped.graph"));
+    ASSERT_TRUE(app.open(folder / "gapped.graph"));
+    EXPECT_FALSE(app.graph().containsVertex(2));
+    EXPECT_EQ(*app.addVertex("new"), 6);
+    app.clear();
+    EXPECT_EQ(*app.addVertex("after clear"), 7);
 }

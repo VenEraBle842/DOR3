@@ -13,7 +13,7 @@ inline constexpr std::size_t maxSeriesSizeCount = 20;
 
 inline Result<void> validateGraphLimits(std::size_t vertexCount, std::size_t edgeCount) {
     if (vertexCount > ApplicationLimits::maxVertices || edgeCount > ApplicationLimits::maxEdges) {
-        return failure(ErrorCode::LimitExceeded,
+        return failure(GraphErrorCode::LimitExceeded,
                        "Maximum: " + std::to_string(ApplicationLimits::maxVertices) + " vertices, " +
                            std::to_string(ApplicationLimits::maxEdges) + " edges.");
     }

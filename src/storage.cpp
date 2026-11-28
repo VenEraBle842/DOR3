@@ -10,7 +10,7 @@
 #include <system_error>
 
 namespace {
-constexpr std::string_view graphFileHeader = "DOR3_GRAPH 1";
+constexpr std::string_view graphFileHeader = "DOR3_GRAPH 2";
 constexpr int maxTemporaryDirectoryAttempts = 16;
 }
 
@@ -33,10 +33,10 @@ static Result<std::filesystem::path> createTemporaryDirectory(const std::filesys
             return path;
         }
         if (error) {
-            return failure(ErrorCode::FileWrite, target.string() + ": " + error.message());
+            return failure(GraphErrorCode::FileWrite, target.string() + ": " + error.message());
         }
     }
-    return failure(ErrorCode::FileWrite, "Cannot create a temporary file for " + target.string());
+    return failure(GraphErrorCode::FileWrite, "Cannot create a temporary file for " + target.string());
 }
 
 static bool readUnsigned(std::istream& input, std::size_t& value) {
@@ -54,58 +54,79 @@ Result<Graph> readGraph(std::istream& input) {
     if (line.ends_with('\r')) {
         line.pop_back();
     }
-    if (!input || line != graphFileHeader) {
-        return failure(ErrorCode::FileRead, "Expected " + std::string(graphFileHeader) + " header.");
+    const bool legacy = line == "DOR3_GRAPH 1";
+    if (!input || (!legacy && line != graphFileHeader)) {
+        return failure(GraphErrorCode::FileRead, "Expected " + std::string(graphFileHeader) + " header.");
     }
     std::size_t vertices = 0, edges = 0;
     if (!std::getline(input, line)) {
-        return failure(ErrorCode::FileRead, "Missing counts.");
+        return failure(GraphErrorCode::FileRead, "Missing counts.");
     }
     std::istringstream counts(line);
     counts.imbue(std::locale::classic());
+    GraphIdCounter vertexCounter, edgeCounter;
+    std::size_t vertexExhausted = 0, edgeExhausted = 0;
     if (!readUnsigned(counts, vertices) || !readUnsigned(counts, edges) ||
-        !(counts >> std::ws).eof()) {
-        return failure(ErrorCode::FileRead, "Expected two unsigned decimal counts.");
+        (!legacy && (!readUnsigned(counts, vertexCounter.next) || !readUnsigned(counts, vertexExhausted) ||
+                     !readUnsigned(counts, edgeCounter.next) || !readUnsigned(counts, edgeExhausted) ||
+                     vertexExhausted > 1 || edgeExhausted > 1)) || !(counts >> std::ws).eof()) {
+        return failure(GraphErrorCode::FileRead, "Invalid counts or identifier high-water marks.");
     }
     auto sizeValidation = validateGraphLimits(vertices, edges);
     if (!sizeValidation) {
-        return failure(ErrorCode::FileRead, sizeValidation.error().detail);
+        return failure(GraphErrorCode::FileRead, sizeValidation.error().detail);
     }
     Graph graph;
     for (std::size_t i = 0; i < vertices; ++i) {
         std::string label;
         if (!std::getline(input, line)) {
-            return failure(ErrorCode::FileRead, "Missing vertex at index " + std::to_string(i));
+            return failure(GraphErrorCode::FileRead, "Missing vertex at index " + std::to_string(i));
         }
         std::istringstream record(line);
+        VertexId id = i;
+        if (!legacy && !readUnsigned(record, id)) {
+            return failure(GraphErrorCode::FileRead, "Invalid vertex ID.");
+        }
         record >> std::ws;
         if (record.peek() != '"' || !(record >> std::quoted(label)) || !(record >> std::ws).eof() ||
             label.find_first_of("\r\n") != std::string::npos) {
-            return failure(ErrorCode::FileRead,
+            return failure(GraphErrorCode::FileRead,
                            "Invalid quoted label at vertex " + std::to_string(i));
         }
-        graph.addVertex({std::move(label)});
+        auto added = graph.addVertexWithId(id, {std::move(label)});
+        if (!added) {
+            return failure(GraphErrorCode::FileRead, formatError(added.error()));
+        }
     }
     for (std::size_t i = 0; i < edges; ++i) {
         VertexId first = 0, second = 0;
         if (!std::getline(input, line)) {
-            return failure(ErrorCode::FileRead, "Missing edge " + std::to_string(i));
+            return failure(GraphErrorCode::FileRead, "Missing edge " + std::to_string(i));
         }
         std::istringstream record(line);
         record.imbue(std::locale::classic());
-        if (!readUnsigned(record, first) || !readUnsigned(record, second) ||
+        EdgeId id = i;
+        if ((!legacy && !readUnsigned(record, id)) || !readUnsigned(record, first) || !readUnsigned(record, second) ||
             !(record >> std::ws).eof()) {
-            return failure(ErrorCode::FileRead, "Invalid edge " + std::to_string(i));
+            return failure(GraphErrorCode::FileRead, "Invalid edge " + std::to_string(i));
         }
-        auto added = graph.addEdge(first, second);
+        auto added = graph.addEdgeWithId(id, first, second);
         if (!added) {
-            return failure(ErrorCode::FileRead,
+            return failure(GraphErrorCode::FileRead,
                            "Edge " + std::to_string(i) + ": " + formatError(added.error()));
+        }
+    }
+    if (!legacy) {
+        vertexCounter.exhausted = vertexExhausted != 0;
+        edgeCounter.exhausted = edgeExhausted != 0;
+        auto advanced = graph.advanceIdCounters(vertexCounter, edgeCounter);
+        if (!advanced) {
+            return failure(GraphErrorCode::FileRead, formatError(advanced.error()));
         }
     }
     input >> std::ws;
     if (!input.eof() || input.bad()) {
-        return failure(ErrorCode::FileRead, "Unexpected trailing data or read failure.");
+        return failure(GraphErrorCode::FileRead, "Unexpected trailing data or read failure.");
     }
     return graph;
 }
@@ -116,24 +137,25 @@ Result<void> writeGraph(const Graph& graph, std::ostream& output) {
         return sizeValidation;
     }
     output.imbue(std::locale::classic());
-    output << graphFileHeader << '\n' << graph.vertexCount() << ' ' << graph.edgeCount() << '\n';
-    for (std::size_t i = 0; i < graph.vertexCount(); ++i) {
-        const auto& label = graph.vertex(i)->get().label;
+    const auto vertexCounter = graph.vertexIdCounter();
+    const auto edgeCounter = graph.edgeIdCounter();
+    output << std::dec << std::noboolalpha << std::noshowpos << std::noshowbase;
+    output << graphFileHeader << '\n' << graph.vertexCount() << ' ' << graph.edgeCount() << ' '
+           << vertexCounter.next << ' ' << vertexCounter.exhausted << ' '
+           << edgeCounter.next << ' ' << edgeCounter.exhausted << '\n';
+    for (const auto id : graph.vertexIds()) {
+        const auto& label = graph.vertex(id)->get().data.label;
         if (label.find_first_of("\r\n") != std::string::npos) {
-            return failure(ErrorCode::InvalidParameters, "Vertex labels must occupy one line.");
+            return failure(GraphErrorCode::InvalidParameters, "Vertex labels must occupy one line.");
         }
-        output << std::quoted(label) << '\n';
+        output << id << ' ' << std::quoted(label) << '\n';
     }
-    for (std::size_t i = 0; i < graph.vertexCount(); ++i) {
-        const auto& neighbors = graph.neighbors(i)->get();
-        for (std::size_t j = 0; j < neighbors.size(); ++j) {
-            if (i < neighbors[j]) {
-                output << i << ' ' << neighbors[j] << '\n';
-            }
-        }
+    for (const auto id : graph.edgeIds()) {
+        const auto& edge = graph.edge(id)->get();
+        output << id << ' ' << edge.first << ' ' << edge.second << '\n';
     }
     if (!output) {
-        return failure(ErrorCode::FileWrite);
+        return failure(GraphErrorCode::FileWrite);
     }
     return {};
 }
@@ -141,7 +163,7 @@ Result<void> writeGraph(const Graph& graph, std::ostream& output) {
 Result<Graph> loadGraph(const std::filesystem::path& path) {
     std::ifstream input(path);
     if (!input) {
-        return failure(ErrorCode::FileRead, path.string());
+        return failure(GraphErrorCode::FileRead, path.string());
     }
     auto graph = readGraph(input);
     if (!graph) {
@@ -160,7 +182,7 @@ Result<void> writeFile(const std::filesystem::path& path,
     const auto temporary = cleanup.path / "content";
     std::ofstream output(temporary, std::ios::trunc);
     if (!output) {
-        return failure(ErrorCode::FileWrite, path.string());
+        return failure(GraphErrorCode::FileWrite, path.string());
     }
     auto result = writer(output);
     output.flush();
@@ -170,12 +192,12 @@ Result<void> writeFile(const std::filesystem::path& path,
         if (!result) {
             return result;
         }
-        return failure(ErrorCode::FileWrite, path.string());
+        return failure(GraphErrorCode::FileWrite, path.string());
     }
     std::error_code error;
     std::filesystem::rename(temporary, path, error);
     if (error) {
-        return failure(ErrorCode::FileWrite, path.string() + ": " + error.message());
+        return failure(GraphErrorCode::FileWrite, path.string() + ": " + error.message());
     }
     return {};
 }

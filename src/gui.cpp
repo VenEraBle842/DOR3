@@ -40,7 +40,7 @@ auto readChoice(const wxChoice& choice, const Catalog& entries, std::string_view
     -> Result<decltype(entries[0].id)> {
     const auto index = choice.GetSelection();
     if (index < 0 || static_cast<std::size_t>(index) >= std::size(entries)) {
-        return failure(ErrorCode::InvalidParameters, "Select a valid " + std::string(field) + ".");
+        return failure(GraphErrorCode::InvalidParameters, "Select a valid " + std::string(field) + ".");
     }
     return entries[static_cast<std::size_t>(index)].id;
 }
@@ -81,7 +81,7 @@ Result<T> parseNumber(wxString value, std::string_view field) {
     T parsed{};
     const auto result = std::from_chars(inputText.data(), inputText.data() + inputText.size(), parsed);
     if (result.ec != std::errc{} || result.ptr != inputText.data() + inputText.size()) {
-        return failure(ErrorCode::InvalidParameters, "Invalid " + std::string(field) + ".");
+        return failure(GraphErrorCode::InvalidParameters, "Invalid " + std::string(field) + ".");
     }
     return parsed;
 }
@@ -210,23 +210,20 @@ class GraphCanvas final : public wxPanel {
                 {size.x / 2 + (count == 1 ? 0 : static_cast<int>(radius * std::cos(angle))),
                  size.y / 2 + (count == 1 ? 0 : static_cast<int>(radius * std::sin(angle)))});
         }
+        const auto ids = graph.vertexIds();
         dc.SetPen(wxPen(wxColour(175, 184, 198), 1));
-        for (std::size_t i = 0; i < count; ++i) {
-            const auto& neighbors = graph.neighbors(i)->get();
-            for (std::size_t j = 0; j < neighbors.size(); ++j) {
-                const auto target = neighbors[j];
-                if (i < target) {
-                    dc.DrawLine(
-                        positions[i].x, positions[i].y, positions[target].x, positions[target].y);
-                }
-            }
+        for (const auto id : graph.edgeIds()) {
+            const auto& edge = graph.edge(id)->get();
+            const auto first = *coloringVertexPosition(ids, edge.first);
+            const auto second = *coloringVertexPosition(ids, edge.second);
+            dc.DrawLine(positions[first].x, positions[first].y, positions[second].x, positions[second].y);
         }
         for (std::size_t i = 0; i < count; ++i) {
-            dc.SetBrush(wxBrush(application_.coloring() ? colorForIndex(application_.coloring()->colors[i])
+            dc.SetBrush(wxBrush(application_.coloring() ? colorForIndex(*application_.coloring()->color(ids[i]))
                                                         : wxColour(224, 232, 245)));
             dc.SetPen(wxPen(wxColour(75, 87, 110), 1));
             dc.DrawCircle(positions[i].x, positions[i].y, vertexRadius);
-            const auto id = wxString::Format("%zu", i);
+            const auto id = wxString::Format("%zu", ids[i]);
             const auto extent = dc.GetTextExtent(id);
             dc.DrawText(id, positions[i].x - extent.x / 2, positions[i].y - extent.y / 2);
         }
@@ -250,13 +247,16 @@ class VertexTable final : public wxListCtrl {
 
     const GraphApplication& application_;
     const bool& busy_;
+    DynamicArray<VertexId> vertexIds_;
     DynamicArray<std::size_t> processingSteps_;
 
     wxString OnGetItemText(long row, long column) const override {
         if (busy_) {
             return {};
         }
-        const auto id = static_cast<std::size_t>(row);
+        const auto position = static_cast<std::size_t>(row);
+        if (position >= vertexIds_.size()) return {};
+        const auto id = vertexIds_[position];
         const auto& graph = application_.graph();
         if (!graph.containsVertex(id)) {
             return {};
@@ -266,22 +266,22 @@ class VertexTable final : public wxListCtrl {
         case Column::Vertex:
             return wxString::Format("%zu", id);
         case Column::Label:
-            return convertToWxString(graph.vertex(id)->get().label);
+            return convertToWxString(graph.vertex(id)->get().data.label);
         case Column::Degree:
             return wxString::Format("%zu", neighbors.size());
         case Column::Color:
             return application_.coloring()
-                       ? wxString::Format("C%zu", application_.coloring()->colors[id])
+                       ? wxString::Format("C%zu", *application_.coloring()->color(id))
                        : "—";
         case Column::Step:
-            return application_.coloring() ? wxString::Format("%zu", processingSteps_[id] + 1) : "—";
+            return application_.coloring() ? wxString::Format("%zu", processingSteps_[position] + 1) : "—";
         case Column::Neighbors: {
             wxString list;
             for (std::size_t i = 0; i < neighbors.size(); ++i) {
                 if (i) {
                     list += ", ";
                 }
-                list += wxString::Format("%zu", neighbors[i]);
+                list += wxString::Format("%zu", neighbors[i].neighbor);
             }
             return list;
         }
@@ -309,6 +309,7 @@ public:
     }
 
     void update() {
+        vertexIds_ = application_.graph().vertexIds();
         processingSteps_.clear();
         const auto count = application_.graph().vertexCount();
         for (std::size_t i = 0; i < count; ++i) {
@@ -317,7 +318,7 @@ public:
         if (application_.coloring()) {
             const auto& processingOrder = application_.coloring()->processingOrder;
             for (std::size_t i = 0; i < count; ++i) {
-                processingSteps_[processingOrder[i]] = i;
+                processingSteps_[*coloringVertexPosition(vertexIds_, processingOrder[i])] = i;
             }
         }
         SetItemCount(static_cast<long>(count));
@@ -345,7 +346,7 @@ class MainFrame final : public wxFrame {
     GenerationControls generationControls_, seriesGenerationControls_;
     std::jthread worker_;
 
-    void showError(const Error& error) {
+    void showError(const GraphError& error) {
         wxMessageBox(convertToWxString(formatError(error)), "DOR3", wxOK | wxICON_ERROR, this);
     }
 
@@ -354,7 +355,7 @@ class MainFrame final : public wxFrame {
         try {
             action();
         } catch (const std::exception& error) {
-            showError({ErrorCode::Unexpected, error.what()});
+            showError({GraphErrorCode::Unexpected, error.what()});
         }
     }
 
@@ -428,7 +429,7 @@ class MainFrame final : public wxFrame {
                 try {
                     result = action();
                 } catch (const std::exception& error) {
-                    result = failure(ErrorCode::Unexpected, error.what());
+                    result = failure(GraphErrorCode::Unexpected, error.what());
                 }
                 CallAfter([this, result = std::move(result), showComparison, onSuccess] {
                     executeWithErrorHandling([&] {
@@ -550,6 +551,7 @@ class MainFrame final : public wxFrame {
                 refresh();
             }
         });
+        addLabel(*graphPanel_, *tools, "Vertex IDs (remove uses the first)");
         auto edge = std::make_unique<wxBoxSizer>(wxHORIZONTAL);
         edgeFirst_ =
             createControl<wxTextCtrl>(*graphPanel_, wxID_ANY, "0", wxDefaultPosition, wxSize(90, -1));
@@ -563,6 +565,16 @@ class MainFrame final : public wxFrame {
         });
         addButton(*graphPanel_, *tools, "Remove edge", [this] {
             changeEdge(true);
+        });
+        addButton(*graphPanel_, *tools, "Remove vertex", [this] {
+            auto id = parseNumber<VertexId>(edgeFirst_->GetValue(), "vertex ID");
+            if (!id) {
+                showError(id.error());
+                return;
+            }
+            runBackgroundTask([this, id = *id] {
+                return application_.removeVertex(id);
+            });
         });
         tools->AddSpacer(10);
         addLabel(*graphPanel_, *tools, "Generate graph");
@@ -612,7 +624,7 @@ class MainFrame final : public wxFrame {
         });
         auto note = createControl<wxStaticText>(*graphPanel_,
                                           wxID_ANY,
-                                          "Vertex IDs and colors start at 0.\nGreedy methods do "
+                                          "Vertex IDs are stable; gaps are allowed.\nGreedy methods do "
                                           "not guarantee\nthe minimum number of colors.");
         tools->Add(note.get(), 0, wxTOP, 8);
         addSizer(*root, std::move(tools), 0, wxEXPAND | wxALL, 12);

@@ -1,3 +1,4 @@
+#include <benchmark.hpp>
 #include <coloring.hpp>
 #include <generator.hpp>
 #include <gtest/gtest.h>
@@ -20,7 +21,7 @@ struct ThrowingMoveAssignment {
 };
 
 template <class T>
-concept AcceptedVertexData = requires { typename UndirectedGraph<T>; };
+concept AcceptedVertexData = requires { typename UnweightedUndirectedGraph<T>; };
 
 static_assert(AcceptedVertexData<VertexData>);
 static_assert(AcceptedVertexData<int>);
@@ -47,7 +48,7 @@ struct ThrowingDefaultData {
 }
 
 TEST(Graph, StorageConstructionFailurePreservesVerticesAndEdges) {
-    UndirectedGraph<ThrowingDefaultData> graph;
+    UnweightedUndirectedGraph<ThrowingDefaultData> graph;
     for (int i = 0; i < 4; ++i) {
         graph.addVertex(ThrowingDefaultData(i));
     }
@@ -61,7 +62,7 @@ TEST(Graph, StorageConstructionFailurePreservesVerticesAndEdges) {
     EXPECT_EQ(graph.vertexCount(), 4);
     EXPECT_EQ(graph.edgeCount(), 2);
     for (VertexId i = 0; i < 4; ++i) {
-        EXPECT_EQ(graph.vertex(i)->get().value, static_cast<int>(i));
+        EXPECT_EQ(graph.vertex(i)->get().data.value, static_cast<int>(i));
     }
     EXPECT_TRUE(graph.hasEdge(0, 1));
     EXPECT_TRUE(graph.hasEdge(1, 0));
@@ -81,9 +82,9 @@ TEST(Graph, OwnsSymmetricEdgesAndRejectsInvalidChanges) {
     EXPECT_EQ(graph.edgeCount(), 1);
     EXPECT_TRUE(graph.hasEdge(1, 0));
     EXPECT_EQ(graph.neighbors(0)->get().size(), 1);
-    EXPECT_EQ(graph.addEdge(1, 0).error().code, ErrorCode::DuplicateEdge);
-    EXPECT_EQ(graph.addEdge(0, 0).error().code, ErrorCode::SelfLoop);
-    EXPECT_EQ(graph.addEdge(0, 3).error().code, ErrorCode::InvalidVertex);
+    EXPECT_EQ(graph.addEdge(1, 0).error().code, GraphErrorCode::DuplicateEdge);
+    EXPECT_EQ(graph.addEdge(0, 0).error().code, GraphErrorCode::SelfLoop);
+    EXPECT_EQ(graph.addEdge(0, 3).error().code, GraphErrorCode::InvalidVertex);
     EXPECT_FALSE(graph.vertex(3));
     EXPECT_FALSE(graph.neighbors(3));
     EXPECT_EQ(graph.edgeCount(), 1);
@@ -91,23 +92,23 @@ TEST(Graph, OwnsSymmetricEdgesAndRejectsInvalidChanges) {
     EXPECT_FALSE(graph.hasEdge(0, 1));
     EXPECT_EQ(graph.edgeCount(), 0);
     EXPECT_TRUE(graph.neighbors(0)->get().empty());
-    EXPECT_EQ(graph.removeEdge(0, 1).error().code, ErrorCode::MissingEdge);
-    EXPECT_EQ(graph.removeEdge(0, 5).error().code, ErrorCode::InvalidVertex);
+    EXPECT_EQ(graph.removeEdge(0, 1).error().code, GraphErrorCode::MissingEdge);
+    EXPECT_EQ(graph.removeEdge(0, 5).error().code, GraphErrorCode::InvalidVertex);
 }
 
 TEST(Graph, SupportsArbitraryVertexDataAndMoveReuse) {
-    UndirectedGraph<int> graph;
+    UnweightedUndirectedGraph<int> graph;
     for (int i = 0; i < 35; ++i) {
         graph.addVertex(i);
     }
     ASSERT_TRUE(graph.addEdge(1, 30));
     auto moved = std::move(graph);
-    EXPECT_EQ(moved.vertex(30)->get(), 30);
+    EXPECT_EQ(moved.vertex(30)->get().data, 30);
     EXPECT_EQ(moved.edgeCount(), 1);
     EXPECT_EQ(graph.vertexCount(), 0);
     EXPECT_EQ(graph.edgeCount(), 0);
     graph.addVertex(42);
-    EXPECT_EQ(graph.vertex(0)->get(), 42);
+    EXPECT_EQ(graph.vertex(35)->get().data, 42);
     auto coloring = colorGraph(moved, ColoringAlgorithm::LargestDegreeFirst);
     ASSERT_TRUE(coloring);
     EXPECT_TRUE(validateColoring(moved, *coloring));
@@ -234,7 +235,7 @@ TEST(Coloring, AllFiveVertexGraphsSatisfyEdgesAndDegreeBound) {
                 const auto& neighbors = graph.neighbors(i)->get();
                 maximumDegree = std::max(maximumDegree, neighbors.size());
                 for (std::size_t j = 0; j < neighbors.size(); ++j) {
-                    ASSERT_NE(result->colors[i], result->colors[neighbors[j]]) << mask;
+                    ASSERT_NE(result->colors[i], *result->color(neighbors[j].neighbor)) << mask;
                 }
             }
             EXPECT_LE(result->colorCount, maximumDegree + 1);
@@ -312,4 +313,363 @@ TEST(Catalogs, EntriesHaveUniqueIdsNamesAndCallableImplementations) {
             {5, entry.id, std::numeric_limits<double>::quiet_NaN(), 42});
         EXPECT_EQ(invalidProbability.has_value(), !entry.usesRandomParameters);
     }
+}
+
+// Проверка API выполняется компилятором: базовый интерфейс не позволяет забыть вес.
+template <class T>
+concept AcceptsUnweightedEdge = requires(T& graph) { graph.addEdge(VertexId{}, VertexId{}); };
+template <class T>
+concept HasWeightStorageAPI = requires(const T& graph) { graph.weight(EdgeId{}); };
+static_assert(!AcceptsUnweightedEdge<UndirectedGraphBase<int>>);
+static_assert(AcceptsUnweightedEdge<UnweightedUndirectedGraph<int>>);
+static_assert(!AcceptsUnweightedEdge<WeightedUndirectedGraph<int, std::string>>);
+static_assert(!HasWeightStorageAPI<UnweightedUndirectedGraph<int>>);
+static_assert(std::has_virtual_destructor_v<UndirectedGraphBase<int>>);
+static_assert(!std::is_copy_constructible_v<Graph>);
+static_assert(std::is_nothrow_move_constructible_v<Graph>);
+static_assert(std::is_nothrow_move_assignable_v<WeightedUndirectedGraph<int, std::string>>);
+static_assert(std::is_const_v<std::remove_reference_t<decltype(std::declval<const Graph&>().vertex(0)->get())>>);
+static_assert(std::is_const_v<std::remove_reference_t<decltype(std::declval<const Graph&>().edge(0)->get())>>);
+static_assert(std::is_const_v<std::remove_reference_t<decltype(std::declval<const Graph&>().neighbors(0)->get())>>);
+
+template <GraphData T>
+void expectGraphConsistency(const UndirectedGraphBase<T>& graph) {
+    std::size_t adjacencyCount = 0;
+    auto ids = graph.vertexIds();
+    ASSERT_EQ(ids.size(), graph.vertexCount());
+    for (std::size_t i = 0; i < ids.size(); ++i) {
+        const auto id = ids[i];
+        if (i) { EXPECT_LT(ids[i - 1], id); }
+        ASSERT_TRUE(graph.vertex(id));
+        EXPECT_EQ(graph.vertex(id)->get().id, id);
+        const auto& list = graph.neighbors(id)->get();
+        EXPECT_EQ(*graph.degree(id), list.size());
+        for (const auto& adjacent : list) {
+            ++adjacencyCount;
+            ASSERT_TRUE(graph.containsVertex(adjacent.neighbor));
+            ASSERT_TRUE(graph.edge(adjacent.edge));
+            const auto& edge = graph.edge(adjacent.edge)->get();
+            EXPECT_TRUE((edge.first == id && edge.second == adjacent.neighbor) ||
+                        (edge.second == id && edge.first == adjacent.neighbor));
+            ASSERT_TRUE(graph.edgeId(adjacent.neighbor, id));
+            EXPECT_EQ(*graph.edgeId(adjacent.neighbor, id), adjacent.edge);
+        }
+    }
+    EXPECT_EQ(adjacencyCount, graph.edgeCount() * 2);
+    auto edges = graph.edgeIds();
+    EXPECT_EQ(edges.size(), graph.edgeCount());
+    for (std::size_t i = 0; i < edges.size(); ++i) {
+        if (i) { EXPECT_LT(edges[i - 1], edges[i]); }
+        const auto& edge = graph.edge(edges[i])->get();
+        EXPECT_EQ(edge.id, edges[i]);
+        EXPECT_EQ(*graph.edgeId(edge.first, edge.second), edge.id);
+    }
+}
+
+TEST(Graph, IsolatedAndIncidentVertexRemovalPreservesIdentifiersAndIndexes) {
+    UnweightedUndirectedGraph<int> graph;
+    for (int i = 0; i < 7; ++i) graph.addVertex(i * 10);
+    const auto first = *graph.addEdge(0, 2);
+    const auto removed = *graph.addEdge(2, 4);
+    const auto last = *graph.addEdge(4, 6);
+    ASSERT_TRUE(graph.removeVertex(1));
+    EXPECT_EQ(graph.vertex(6)->get().data, 60);
+    ASSERT_TRUE(graph.removeEdge(removed));
+    EXPECT_EQ(graph.edge(last)->get().id, last);
+    EXPECT_EQ(*graph.edgeId(6, 4), last);
+    expectGraphConsistency<int>(graph);
+    ASSERT_TRUE(graph.removeVertex(2));
+    EXPECT_FALSE(graph.containsEdge(first));
+    EXPECT_FALSE(graph.containsVertex(2));
+    EXPECT_EQ(graph.vertex(6)->get().data, 60);
+    EXPECT_EQ(graph.vertex(4)->get().data, 40);
+    EXPECT_EQ(graph.edgeCount(), 1);
+    EXPECT_EQ(graph.addVertex(70), 7);
+    const auto added = *graph.addEdge(0, 7);
+    EXPECT_GT(added, last);
+    expectGraphConsistency<int>(graph);
+    EXPECT_FALSE(graph.removeVertex(1));
+    EXPECT_FALSE(graph.removeEdge(removed));
+    EXPECT_FALSE(graph.addVertexWithId(1, 1));
+    EXPECT_FALSE(graph.addEdgeWithId(removed, 0, 4));
+    expectGraphConsistency<int>(graph);
+}
+
+TEST(Graph, RepeatedDenseCompactionKeepsEveryIdentifierResolvable) {
+    UnweightedUndirectedGraph<int> graph;
+    for (int i = 0; i < 32; ++i) graph.addVertex(i);
+    for (VertexId i = 0; i < 32; ++i)
+        for (VertexId j = i + 1; j < 32; ++j)
+            if ((i + j) % 3 == 0) { ASSERT_TRUE(graph.addEdge(i, j)); }
+    for (VertexId i = 1; i < 32; i += 2) {
+        ASSERT_TRUE(graph.removeVertex(i));
+        expectGraphConsistency<int>(graph);
+        for (const auto id : graph.vertexIds()) EXPECT_EQ(graph.vertex(id)->get().data, static_cast<int>(id));
+    }
+    const auto edges = graph.edgeIds();
+    for (std::size_t i = 0; i < edges.size(); i += 2) {
+        ASSERT_TRUE(graph.removeEdge(edges[i]));
+        expectGraphConsistency<int>(graph);
+    }
+}
+
+TEST(Graph, ClearAndMoveKeepHighWaterMarksAndAllowReuse) {
+    Graph source;
+    for (int i = 0; i < 4; ++i) source.addVertex({""});
+    const auto edge = *source.addEdge(0, 3);
+    ASSERT_TRUE(source.removeVertex(1));
+    Graph moved(std::move(source));
+    EXPECT_EQ(source.vertexCount(), 0);
+    EXPECT_EQ(source.edgeCount(), 0);
+    EXPECT_EQ(source.addVertex({"reuse"}), 4);
+    source.clear();
+    EXPECT_EQ(source.addVertex({"again"}), 5);
+    EXPECT_EQ(source.addVertex({"another"}), 6);
+    EXPECT_GT(*source.addEdge(5, 6), edge);
+    moved = std::move(source);
+    EXPECT_TRUE(moved.containsVertex(5));
+    EXPECT_EQ(moved.addVertex({"next"}), 7);
+    EXPECT_EQ(source.addVertex({"source"}), 7);
+    auto& alias = moved;
+    moved = std::move(alias);
+    expectGraphConsistency<VertexData>(moved);
+    moved.clear();
+    EXPECT_EQ(moved.addVertex({"after clear"}), 8);
+}
+
+TEST(Graph, ExhaustedCountersNeverWrapAcrossClearOrMove) {
+    constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+    UnweightedUndirectedGraph<int> graph;
+    ASSERT_TRUE(graph.addVertexWithId(maximum - 1, 1));
+    EXPECT_EQ(graph.addVertex(2), maximum);
+    EXPECT_THROW(graph.addVertex(3), std::overflow_error);
+    ASSERT_TRUE(graph.advanceIdCounters(graph.vertexIdCounter(), {maximum, false}));
+    auto edge = graph.addEdge(maximum - 1, maximum);
+    ASSERT_TRUE(edge);
+    EXPECT_EQ(*edge, maximum);
+    ASSERT_TRUE(graph.removeEdge(*edge));
+    EXPECT_EQ(graph.addEdge(maximum - 1, maximum).error().code, GraphErrorCode::IdentifierExhausted);
+    EXPECT_EQ(graph.edgeCount(), 0);
+    auto moved = std::move(graph);
+    EXPECT_THROW(graph.addVertex(4), std::overflow_error);
+    moved.clear();
+    EXPECT_THROW(moved.addVertex(4), std::overflow_error);
+    EXPECT_FALSE(moved.advanceIdCounters({0, false}, {0, false}));
+    EXPECT_TRUE(moved.vertexIdCounter().exhausted);
+    EXPECT_TRUE(moved.edgeIdCounter().exhausted);
+}
+
+struct NonNumericWeight {
+    std::unique_ptr<std::string> text;
+    explicit NonNumericWeight(std::string value) : text(std::make_unique<std::string>(std::move(value))) {}
+    NonNumericWeight(NonNumericWeight&&) noexcept = default;
+    NonNumericWeight& operator=(NonNumericWeight&&) noexcept = default;
+};
+
+TEST(WeightedGraph, StoresMoveOnlyNonDefaultNonNumericWeightsAndColorsThroughBase) {
+    WeightedUndirectedGraph<int, NonNumericWeight> graph;
+    graph.addVertex(10);
+    graph.addVertex(20);
+    const auto edge = graph.addEdge(0, 1, NonNumericWeight("initial"));
+    ASSERT_TRUE(edge);
+    EXPECT_EQ(*graph.weight(*edge)->get().text, "initial");
+    ASSERT_TRUE(graph.setWeight(*edge, NonNumericWeight("updated")));
+    EXPECT_EQ(*graph.weight(*edge)->get().text, "updated");
+    const UndirectedGraphBase<int>& base = graph;
+    auto result = colorGraph(base, ColoringAlgorithm::LargestDegreeFirst);
+    ASSERT_TRUE(result);
+    EXPECT_TRUE(validateColoring(base, *result));
+    EXPECT_EQ(result->colorCount, 2);
+    EXPECT_FALSE(graph.setWeight(*edge + 1, NonNumericWeight("missing")));
+    EXPECT_FALSE(graph.weight(*edge + 1));
+    EXPECT_FALSE(graph.addEdge(1, 0, NonNumericWeight("duplicate")));
+    EXPECT_FALSE(graph.addEdge(0, 0, NonNumericWeight("loop")));
+    EXPECT_FALSE(graph.addEdge(0, 3, NonNumericWeight("invalid")));
+    EXPECT_EQ(*graph.weight(*edge)->get().text, "updated");
+    EXPECT_EQ(graph.edgeCount(), 1);
+    expectGraphConsistency<int>(graph);
+}
+
+TEST(WeightedGraph, RemovesWeightsViaBaseForEdgesVerticesAndClear) {
+    WeightedUndirectedGraph<int, std::string> graph;
+    for (int i = 0; i < 5; ++i) graph.addVertex(i);
+    const auto a = *graph.addEdge(0, 1, "a");
+    const auto b = *graph.addEdge(1, 2, "b");
+    const auto c = *graph.addEdge(2, 3, "c");
+    const auto d = *graph.addEdge(3, 4, "d");
+    UndirectedGraphBase<int>& base = graph;
+    ASSERT_TRUE(base.removeEdge(a));
+    EXPECT_FALSE(graph.weight(a));
+    EXPECT_EQ(graph.weight(d)->get(), "d");
+    ASSERT_TRUE(base.removeVertex(2));
+    EXPECT_FALSE(graph.weight(b));
+    EXPECT_FALSE(graph.weight(c));
+    EXPECT_EQ(graph.weight(d)->get(), "d");
+    ASSERT_TRUE(base.removeEdge(4, 3));
+    EXPECT_FALSE(graph.weight(d));
+    const auto e = *graph.addEdge(0, 4, "e");
+    base.clear();
+    EXPECT_FALSE(graph.weight(e));
+    EXPECT_EQ(base.vertexCount(), 0);
+    EXPECT_EQ(graph.addVertex(5), 5);
+    EXPECT_EQ(graph.addVertex(6), 6);
+    EXPECT_GT(*graph.addEdge(5, 6, "new"), e);
+    expectGraphConsistency<int>(graph);
+}
+
+struct ObservedWeight {
+    std::shared_ptr<int> lifetime;
+    explicit ObservedWeight(std::shared_ptr<int> token) : lifetime(std::move(token)) {}
+};
+
+TEST(WeightedGraph, DeletionClearAndPolymorphicDestructionReleaseActualWeights) {
+    auto token = std::make_shared<int>(0);
+    auto graph = std::make_unique<WeightedUndirectedGraph<int, ObservedWeight>>();
+    for (int i = 0; i < 3; ++i) graph->addVertex(i);
+    const auto a = *graph->addEdge(0, 1, ObservedWeight(token));
+    const auto b = *graph->addEdge(1, 2, ObservedWeight(token));
+    EXPECT_EQ(token.use_count(), 3);
+    ASSERT_TRUE(graph->removeEdge(a));
+    EXPECT_EQ(token.use_count(), 2);
+    ASSERT_TRUE(graph->removeEdge(b));
+    EXPECT_EQ(token.use_count(), 1);
+    ASSERT_TRUE(graph->addEdge(0, 2, ObservedWeight(token)));
+    graph->clear();
+    EXPECT_EQ(token.use_count(), 1);
+    graph->addVertex(3);
+    graph->addVertex(4);
+    ASSERT_TRUE(graph->addEdge(3, 4, ObservedWeight(token)));
+    std::unique_ptr<UndirectedGraphBase<int>> base = std::move(graph);
+    base.reset();
+    EXPECT_EQ(token.use_count(), 1);
+}
+
+struct ThrowingWeight {
+    inline static bool fail = false;
+    int value;
+    explicit ThrowingWeight(int initial) : value(initial) {}
+    ThrowingWeight(ThrowingWeight&& other) {
+        if (fail) throw std::runtime_error("Cannot move weight");
+        value = other.value;
+    }
+};
+
+TEST(WeightedGraph, MoveConstructionAssignmentAndSourceReusePreserveWeights) {
+    WeightedUndirectedGraph<int, std::string> source;
+    source.addVertex(0);
+    source.addVertex(1);
+    auto edge = *source.addEdge(0, 1, "original");
+    auto moved = std::move(source);
+    EXPECT_EQ(moved.weight(edge)->get(), "original");
+    EXPECT_FALSE(source.weight(edge));
+    EXPECT_EQ(source.addVertex(2), 2);
+    source.addVertex(3);
+    EXPECT_GT(*source.addEdge(2, 3, "reused"), edge);
+    moved = std::move(source);
+    EXPECT_EQ(moved.weight(1)->get(), "reused");
+    EXPECT_FALSE(moved.weight(edge));
+    EXPECT_FALSE(source.weight(1));
+    EXPECT_EQ(source.vertexCount(), 0);
+    EXPECT_EQ(source.addVertex(4), 4);
+    expectGraphConsistency<int>(moved);
+}
+
+TEST(Coloring, GappedIdentifiersAndTieBreakingAfterCompaction) {
+    Graph graph;
+    for (int i = 0; i < 8; ++i) graph.addVertex({std::to_string(i)});
+    ASSERT_TRUE(graph.removeVertex(1));
+    ASSERT_TRUE(graph.removeVertex(3));
+    ASSERT_TRUE(graph.removeVertex(5));
+    ASSERT_TRUE(graph.addEdge(0, 2));
+    ASSERT_TRUE(graph.addEdge(2, 4));
+    ASSERT_TRUE(graph.addEdge(4, 6));
+    for (const auto& algorithm : coloringAlgorithmCatalog<UndirectedGraphBase<VertexData>>) {
+        const UndirectedGraphBase<VertexData>& base = graph;
+        auto result = algorithm.colorGraph(base);
+        ASSERT_TRUE(result);
+        EXPECT_TRUE(validateColoring(base, *result));
+        EXPECT_FALSE(result->color(1));
+        EXPECT_NE(*result->color(0), *result->color(2));
+        EXPECT_NE(*result->color(2), *result->color(4));
+        auto corrupted = *result;
+        corrupted.vertexIds[0] = 1;
+        EXPECT_FALSE(validateColoring(base, corrupted));
+        corrupted = *result;
+        corrupted.processingOrder[0] = 1;
+        EXPECT_FALSE(validateColoring(base, corrupted));
+        corrupted = *result;
+        corrupted.processingOrder[0] = corrupted.processingOrder[1];
+        EXPECT_FALSE(validateColoring(base, corrupted));
+    }
+    auto sequential = colorGraph(graph, ColoringAlgorithm::Sequential);
+    EXPECT_EQ(sequential->processingOrder[0], 0);
+    EXPECT_EQ(sequential->processingOrder[1], 2);
+    EXPECT_EQ(sequential->processingOrder[4], 7);
+    auto degree = colorGraph(graph, ColoringAlgorithm::LargestDegreeFirst);
+    EXPECT_EQ(degree->processingOrder[0], 2);
+    EXPECT_EQ(degree->processingOrder[1], 4);
+    EXPECT_EQ(degree->processingOrder[2], 0);
+    EXPECT_EQ(degree->processingOrder[3], 6);
+    EXPECT_EQ(degree->processingOrder[4], 7);
+    auto comparison = compareAlgorithms(graph, 1);
+    ASSERT_TRUE(comparison);
+    EXPECT_EQ((*comparison)[0].vertexCount, 5);
+}
+
+TEST(Generator, TopologyCallbacksUseExistingIdsWithGaps) {
+    for (const auto& entry : topologyCatalog) {
+        Graph graph;
+        for (int i = 0; i < 8; ++i) graph.addVertex({""});
+        ASSERT_TRUE(graph.removeVertex(1));
+        ASSERT_TRUE(graph.removeVertex(3));
+        ASSERT_TRUE(graph.removeVertex(5));
+        ASSERT_TRUE(entry.buildEdges(graph, {5, entry.id, 1, 1}));
+        expectGraphConsistency<VertexData>(graph);
+        auto result = colorGraph(graph, ColoringAlgorithm::Sequential);
+        ASSERT_TRUE(result);
+        EXPECT_TRUE(validateColoring(graph, *result));
+    }
+}
+
+TEST(GraphDictionaryBoundary, ConvertsDependencyErrorsAndHonorsMissingKeys) {
+    SortedArrayDictionary<std::size_t, std::size_t> storage;
+    IDictionary<std::size_t, std::size_t>& dictionary = storage;
+    ASSERT_TRUE(addGraphDictionaryEntry(dictionary, 7, std::size_t{12}));
+    auto duplicate = addGraphDictionaryEntry(dictionary, 7, std::size_t{99});
+    ASSERT_FALSE(duplicate);
+    EXPECT_EQ(duplicate.error().code, GraphErrorCode::Unexpected);
+    EXPECT_FALSE(duplicate.error().detail.empty());
+    ASSERT_TRUE(dictionary.find(7));
+    EXPECT_EQ(*dictionary.find(7), 12);
+    EXPECT_FALSE(updateGraphDictionaryEntry(dictionary, 9, std::size_t{33}));
+    EXPECT_FALSE(dictionary.find(9));
+    EXPECT_FALSE(dictionary.remove(9));
+    EXPECT_EQ(dictionary.getCount(), 1);
+}
+
+TEST(WeightedGraph, ExhaustionAndMissingElementFailuresPreserveWeightsAndCounters) {
+    WeightedUndirectedGraph<int, std::string> graph;
+    graph.addVertex(0);
+    graph.addVertex(1);
+    constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+    const auto before = graph.vertexIdCounter();
+    EXPECT_FALSE(graph.advanceIdCounters({100, false}, {2, true}));
+    EXPECT_EQ(graph.vertexIdCounter().next, before.next);
+    ASSERT_TRUE(graph.advanceIdCounters(before, {maximum, false}));
+    const auto edge = graph.addEdge(0, 1, "last");
+    ASSERT_TRUE(edge);
+    EXPECT_EQ(*edge, maximum);
+    EXPECT_FALSE(graph.removeVertex(99));
+    EXPECT_FALSE(graph.removeEdge(maximum - 1));
+    EXPECT_FALSE(graph.setWeight(maximum - 1, "missing"));
+    EXPECT_FALSE(graph.addEdge(0, 0, "loop"));
+    EXPECT_EQ(graph.weight(maximum)->get(), "last");
+    ASSERT_TRUE(graph.removeEdge(maximum));
+    auto exhausted = graph.addEdge(0, 1, "cannot insert");
+    ASSERT_FALSE(exhausted);
+    EXPECT_EQ(exhausted.error().code, GraphErrorCode::IdentifierExhausted);
+    EXPECT_FALSE(graph.weight(maximum));
+    EXPECT_EQ(graph.edgeCount(), 0);
+    EXPECT_TRUE(graph.edgeIdCounter().exhausted);
+    expectGraphConsistency<int>(graph);
 }

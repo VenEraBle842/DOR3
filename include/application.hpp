@@ -31,13 +31,14 @@ public:
     }
 
     void clear() {
-        graph_ = Graph{};
+        graph_.clear();
         handleGraphChange();
     }
 
     Result<VertexId> addVertex(std::string label);
     Result<void> addEdge(VertexId first, VertexId second);
     Result<void> removeEdge(VertexId first, VertexId second);
+    Result<void> removeVertex(VertexId id);
     Result<void> generate(const GenerationParameters& parameters);
     Result<void> open(const std::filesystem::path& path);
     Result<void> save(const std::filesystem::path& path);

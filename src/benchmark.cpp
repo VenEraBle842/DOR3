@@ -9,7 +9,7 @@
 
 static Result<void> validateRepetitionCount(std::size_t repetitionCount) {
     if (repetitionCount == 0 || repetitionCount > ApplicationLimits::maxRepetitionCount) {
-        return failure(ErrorCode::InvalidParameters,
+        return failure(GraphErrorCode::InvalidParameters,
                        "Repetitions must be 1.." +
                            std::to_string(ApplicationLimits::maxRepetitionCount) + ".");
     }
@@ -76,7 +76,7 @@ compareSizeSeries(const GenerationParameters& parameters,
     }
     if (sizeCount == 0 || sizeCount > ApplicationLimits::maxSeriesSizeCount ||
         parameters.vertexCount < sizeCount) {
-        return failure(ErrorCode::InvalidParameters,
+        return failure(GraphErrorCode::InvalidParameters,
                        "Use 1.." + std::to_string(ApplicationLimits::maxSeriesSizeCount) +
                            " points and a maximum size between points and " +
                            std::to_string(ApplicationLimits::maxGeneratedVertices) + ".");
@@ -125,7 +125,7 @@ Result<void> exportBenchmark(const DynamicArray<BenchmarkRow>& rows,
                    << "true," << row.topology << ',' << row.seed << ',' << row.edgeProbability << '\n';
         }
         if (!output) {
-            return failure(ErrorCode::FileWrite);
+            return failure(GraphErrorCode::FileWrite);
         }
         return {};
     });

@@ -4,7 +4,7 @@
 
 Result<VertexId> GraphApplication::addVertex(std::string label) {
     if (label.find_first_of("\r\n") != std::string::npos) {
-        return failure(ErrorCode::InvalidParameters, "Vertex labels must occupy one line.");
+        return failure(GraphErrorCode::InvalidParameters, "Vertex labels must occupy one line.");
     }
     auto sizeValidation = validateGraphLimits(graph_.vertexCount() + 1, graph_.edgeCount());
     if (!sizeValidation) {
@@ -24,7 +24,8 @@ Result<void> GraphApplication::addEdge(VertexId first, VertexId second) {
     if (result) {
         handleGraphChange();
     }
-    return result;
+    if (!result) return std::unexpected(result.error());
+    return {};
 }
 
 Result<void> GraphApplication::removeEdge(VertexId first, VertexId second) {
@@ -32,6 +33,12 @@ Result<void> GraphApplication::removeEdge(VertexId first, VertexId second) {
     if (result) {
         handleGraphChange();
     }
+    return result;
+}
+
+Result<void> GraphApplication::removeVertex(VertexId id) {
+    auto result = graph_.removeVertex(id);
+    if (result) handleGraphChange();
     return result;
 }
 
