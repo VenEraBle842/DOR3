@@ -1,5 +1,6 @@
 #pragma once
 
+#include "sequence/container_errors.hpp"
 #include <expected>
 #include <string>
 #include <string_view>
@@ -43,4 +44,10 @@ inline std::string formatError(const GraphError& error) {
     }
     const auto& entry = graphErrorCatalog[index];
     return std::string(entry.message) + "\n" + error.detail + "\n" + std::string(entry.hint);
+}
+
+inline auto failure(const ContainerError& error) {
+    return failure(error.code == ContainerErrorCode::CapacityExceeded
+                       ? GraphErrorCode::LimitExceeded : GraphErrorCode::Unexpected,
+                   formatError(error));
 }

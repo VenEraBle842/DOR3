@@ -1,7 +1,7 @@
 #pragma once
 
 #include "graph.hpp"
-#include "sequence_heap_sort.hpp"
+#include "sequence/sequence_heap_sort.hpp"
 #include <limits>
 #include <optional>
 #include <functional>
@@ -101,16 +101,19 @@ template <ColorableGraph TGraph>
 Result<ColoringResult> colorGraphByDescendingDegree(const TGraph& graph) {
     struct VertexDegree { VertexId vertex; std::size_t degree; };
     ArraySequence<VertexDegree> degrees;
-    degrees.reserve(graph.vertexCount());
+    auto degreesReserved = degrees.reserve(graph.vertexCount());
+    if (!degreesReserved) return failure(degreesReserved.error());
+    // Appends below fit the buffers reserved for vertexCount() elements.
     for (const auto id : graph.vertexIds())
-        degrees.push_back({id, graph.neighbors(id)->get().size()});
+        degrees.push_back({id, graph.neighbors(id)->get().size()}).value();
     heapSort(degrees, [](const VertexDegree& first, const VertexDegree& second) {
         return first.degree != second.degree ? first.degree > second.degree : first.vertex < second.vertex;
     });
     ArraySequence<VertexId> order;
-    order.reserve(graph.vertexCount());
+    auto orderReserved = order.reserve(graph.vertexCount());
+    if (!orderReserved) return failure(orderReserved.error());
     for (const auto& entry : degrees) {
-        order.push_back(entry.vertex);
+        order.push_back(entry.vertex).value();
     }
     return colorGraphGreedily(graph, std::move(order));
 }

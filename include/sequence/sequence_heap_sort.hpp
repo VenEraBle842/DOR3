@@ -6,7 +6,6 @@
 #include <functional>
 #include <utility>
 
-// Heap sort for the local sequence; the LR-2 overload accepts only its old array.
 template <typename T, typename Compare = std::less<T>>
 requires std::strict_weak_order<Compare, const T&, const T&>
 void heapSort(ArraySequence<T>& values, Compare compare = {}) {

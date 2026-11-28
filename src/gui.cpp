@@ -202,13 +202,18 @@ class GraphCanvas final : public wxPanel {
         const auto size = GetClientSize();
         const auto radius = std::max(10, std::min(size.x, size.y) / 2 - 36);
         ArraySequence<Position> positions;
+        auto reserved = positions.reserve(count);
+        if (!reserved) {
+            dc.DrawText(convertToWxString(formatError(reserved.error())), 18, 18);
+            return;
+        }
         for (std::size_t i = 0; i < count; ++i) {
             const double angle =
                 2 * std::numbers::pi * static_cast<double>(i) / static_cast<double>(count) -
                 std::numbers::pi / 2;
             positions.push_back(
                 {size.x / 2 + (count == 1 ? 0 : static_cast<int>(radius * std::cos(angle))),
-                 size.y / 2 + (count == 1 ? 0 : static_cast<int>(radius * std::sin(angle)))});
+                 size.y / 2 + (count == 1 ? 0 : static_cast<int>(radius * std::sin(angle)))}).value();
         }
         const auto ids = graph.vertexIds();
         dc.SetPen(wxPen(wxColour(175, 184, 198), 1));
@@ -310,11 +315,8 @@ public:
 
     void update() {
         vertexIds_ = application_.graph().vertexIds();
-        processingSteps_.clear();
         const auto count = application_.graph().vertexCount();
-        for (std::size_t i = 0; i < count; ++i) {
-            processingSteps_.push_back(0);
-        }
+        processingSteps_ = ArraySequence<std::size_t>(count, 0);
         if (application_.coloring()) {
             const auto& processingOrder = application_.coloring()->processingOrder;
             for (std::size_t i = 0; i < count; ++i) {

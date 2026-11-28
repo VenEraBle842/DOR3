@@ -2,7 +2,7 @@
 
 #include "errors.hpp"
 #include <concepts>
-#include "array_sequence.hpp"
+#include "sequence/array_sequence.hpp"
 #include <dictionary/sorted_array_dictionary.hpp>
 #include <cstddef>
 #include <functional>
@@ -105,14 +105,16 @@ class UndirectedGraphBase {
         if (!vertexCounter_.accepts(id)) {
             return failure(GraphErrorCode::InvalidParameters, "Vertex ID has already been issued or skipped.");
         }
-        vertices_.reserve(vertices_.size() + 1);
-        adjacency_.reserve(adjacency_.size() + 1);
+        auto verticesReserved = vertices_.reserve(vertices_.size() + 1);
+        if (!verticesReserved) return failure(verticesReserved.error());
+        auto adjacencyReserved = adjacency_.reserve(adjacency_.size() + 1);
+        if (!adjacencyReserved) return failure(adjacencyReserved.error());
         auto indexed = addGraphDictionaryEntry(vertexIndex(), id, vertices_.size());
         if (!indexed) {
             return std::unexpected(indexed.error());
         }
-        vertices_.push_back({id, std::move(data)});
-        adjacency_.push_back({});
+        vertices_.push_back({id, std::move(data)}).value();
+        adjacency_.push_back({}).value();
         vertexCounter_.consume(id);
         return id;
     }
@@ -171,16 +173,19 @@ protected:
         }
         auto& left = adjacency_[*vertexIndex().find(first)];
         auto& right = adjacency_[*vertexIndex().find(second)];
-        edges_.reserve(edges_.size() + 1);
-        left.reserve(left.size() + 1);
-        right.reserve(right.size() + 1);
+        auto edgesReserved = edges_.reserve(edges_.size() + 1);
+        if (!edgesReserved) return failure(edgesReserved.error());
+        auto leftReserved = left.reserve(left.size() + 1);
+        if (!leftReserved) return failure(leftReserved.error());
+        auto rightReserved = right.reserve(right.size() + 1);
+        if (!rightReserved) return failure(rightReserved.error());
         auto indexed = addGraphDictionaryEntry(edgeIndex(), id, edges_.size());
         if (!indexed) {
             return std::unexpected(indexed.error());
         }
-        edges_.push_back({id, first, second});
-        left.push_back({second, id});
-        right.push_back({first, id});
+        edges_.push_back({id, first, second}).value();
+        left.push_back({second, id}).value();
+        right.push_back({first, id}).value();
         edgeCounter_.consume(id);
         return id;
     }
@@ -239,15 +244,15 @@ public:
     ArraySequence<VertexId> vertexIds() const {
         const auto keys = vertexIndex().getKeys();
         ArraySequence<VertexId> result;
-        result.reserve(keys.size());
-        for (const auto key : keys) result.push_back(key);
+        result.reserve(keys.size()).value();
+        for (const auto key : keys) result.push_back(key).value();
         return result;
     }
     ArraySequence<EdgeId> edgeIds() const {
         const auto keys = edgeIndex().getKeys();
         ArraySequence<EdgeId> result;
-        result.reserve(keys.size());
-        for (const auto key : keys) result.push_back(key);
+        result.reserve(keys.size()).value();
+        for (const auto key : keys) result.push_back(key).value();
         return result;
     }
 

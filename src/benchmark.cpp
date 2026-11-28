@@ -43,13 +43,14 @@ Result<ArraySequence<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::s
             if (!checked) {
                 return std::unexpected(checked.error());
             }
-            samples.push_back(std::chrono::duration<double, std::micro>(stop - start).count());
+            auto appended = samples.push_back(std::chrono::duration<double, std::micro>(stop - start).count());
+            if (!appended) return failure(appended.error());
         }
         heapSort(samples);
         const auto middle = repetitionCount / 2;
         const double median =
             repetitionCount % 2 ? samples[middle] : (samples[middle - 1] + samples[middle]) / 2;
-        rows.push_back({graph.vertexCount(),
+        auto appended = rows.push_back({graph.vertexCount(),
                         graph.edgeCount(),
                         algorithm.id,
                         median,
@@ -58,6 +59,7 @@ Result<ArraySequence<BenchmarkRow>> compareAlgorithms(const Graph& graph, std::s
                         "Current graph",
                         0,
                         0});
+        if (!appended) return failure(appended.error());
     }
     return rows;
 }
@@ -104,7 +106,8 @@ compareSizeSeries(const GenerationParameters& parameters,
             row.topology = topologyName(parameters.topology);
             row.seed = parameters.seed;
             row.edgeProbability = parameters.edgeProbability;
-            rows.push_back(std::move(row));
+            auto appended = rows.push_back(std::move(row));
+            if (!appended) return failure(appended.error());
         }
     }
     return rows;

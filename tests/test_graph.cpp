@@ -673,3 +673,11 @@ TEST(WeightedGraph, ExhaustionAndMissingElementFailuresPreserveWeightsAndCounter
     EXPECT_TRUE(graph.edgeIdCounter().exhausted);
     expectGraphConsistency<int>(graph);
 }
+
+TEST(GraphContainerBoundary, ConvertsContainerErrorsToGraphErrors) {
+    auto capacity = failure(ContainerError{ContainerErrorCode::CapacityExceeded, 100, 50});
+    EXPECT_EQ(capacity.error().code, GraphErrorCode::LimitExceeded);
+    EXPECT_NE(capacity.error().detail.find("100"), std::string::npos);
+    auto index = failure(ContainerError{ContainerErrorCode::IndexOutOfRange, 3, 2});
+    EXPECT_EQ(index.error().code, GraphErrorCode::Unexpected);
+}
